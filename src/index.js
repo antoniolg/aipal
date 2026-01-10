@@ -6,12 +6,7 @@ const { randomUUID } = require('crypto');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const {
-  resolveAgentConfig,
-  buildAgentCommand,
-  parseAgentOutput,
-  getAgentLabel,
-} = require('./agent');
+const { buildAgentCommand, parseAgentOutput, getAgentLabel } = require('./agent');
 const { readConfig, updateConfig } = require('./config-store');
 const {
   chunkText,
@@ -32,20 +27,14 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const { agentName, agentConfig } = resolveAgentConfig();
-const AGENT_LABEL = getAgentLabel(agentName, agentConfig);
+const AGENT_LABEL = getAgentLabel();
 
-const PARAKEET_CMD = process.env.PARAKEET_CMD || 'parakeet-mlx';
-const PARAKEET_MODEL = process.env.PARAKEET_MODEL;
-const PARAKEET_TIMEOUT_MS = Number(process.env.PARAKEET_TIMEOUT_MS || 120000);
+const PARAKEET_CMD = 'parakeet-mlx';
+const PARAKEET_TIMEOUT_MS = 120000;
 
-const IMAGE_DIR = path.resolve(
-  process.env.IMAGE_DIR || path.join(os.tmpdir(), 'aipal', 'images')
-);
-const IMAGE_TTL_HOURS = Number(process.env.IMAGE_TTL_HOURS || 24);
-const IMAGE_CLEANUP_INTERVAL_MS = Number(
-  process.env.IMAGE_CLEANUP_INTERVAL_MS || 60 * 60 * 1000
-);
+const IMAGE_DIR = path.resolve(path.join(os.tmpdir(), 'aipal', 'images'));
+const IMAGE_TTL_HOURS = 24;
+const IMAGE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 const bot = new Telegraf(BOT_TOKEN);
 const queues = new Map();
@@ -131,9 +120,6 @@ async function transcribeWithParakeet(audioPath) {
     '--output-template',
     outputTemplate,
   ];
-  if (PARAKEET_MODEL) {
-    args.push('--model', PARAKEET_MODEL);
-  }
   await execLocal(PARAKEET_CMD, args, { timeout: PARAKEET_TIMEOUT_MS });
   const outputPath = path.join(outputDir, `${outputTemplate}.txt`);
   const text = await fs.readFile(outputPath, 'utf8');
@@ -186,11 +172,12 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   const finalPrompt = buildPrompt(prompt, options.imagePaths || [], IMAGE_DIR);
   const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
   const promptExpression = '"$PROMPT"';
-  const agentCmd = buildAgentCommand(
-    finalPrompt,
-    { chatId, threadId, promptExpression, model, thinking },
-    agentConfig
-  );
+  const agentCmd = buildAgentCommand(finalPrompt, {
+    threadId,
+    promptExpression,
+    model,
+    thinking,
+  });
   const command = [
     `PROMPT_B64=${shellQuote(promptBase64)};`,
     'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
@@ -198,7 +185,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   ].join(' ');
 
   const output = await execLocal('bash', ['-lc', command]);
-  const parsed = parseAgentOutput(output, agentConfig);
+  const parsed = parseAgentOutput(output);
   if (parsed.threadId) {
     threads.set(chatId, parsed.threadId);
   }

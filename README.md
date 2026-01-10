@@ -43,82 +43,28 @@ Open Telegram, send `/start`, then any message.
 - `/thinking <level>`: set thinking level (persisted in `config.json`)
 
 ### Images in responses
-If the agent generates an image, save it under `IMAGE_DIR` and reply with:
+If the agent generates an image, save it under the image folder (default: OS temp under `aipal/images`) and reply with:
 ```
 [[image:/absolute/path]]
 ```
 The bot will send the image back to Telegram.
 
 ## Configuration
-Environment variables live in `.env`.
+The only required environment variable is `TELEGRAM_BOT_TOKEN` in `.env`.
 
-**Bot**
-- `TELEGRAM_BOT_TOKEN`: required
-
-**Config file**
-- `BOT_CONFIG_PATH`: JSON config path (default: `~/.config/aipal/config.json` or `$XDG_CONFIG_HOME/aipal/config.json`)
-- `AGENT`: default agent key when the JSON config does not specify one
-
-**Agent command**
-- `CODEX_CMD`: default `codex`
-- `CODEX_ARGS`: default `--json --skip-git-repo-check`
-- `CODEX_TEMPLATE`: optional full template; supports `{prompt}`, `{session}`, `{model}`, `{thinking}`
-
-**Audio**
-- `PARAKEET_CMD`: default `parakeet-mlx`
-- `PARAKEET_MODEL`: optional model name
-- `PARAKEET_TIMEOUT_MS`: transcription timeout
-
-**Images**
-- `IMAGE_DIR`: folder for inbound/outbound images (default: OS temp under `aipal/images`)
-- `IMAGE_TTL_HOURS`: auto-delete images older than this (default: 24, set `0` to disable)
-- `IMAGE_CLEANUP_INTERVAL_MS`: cleanup interval (default: 3600000 / 1h)
-
-See `docs/configuration.md` for the JSON schema and full examples.
-
-## Agent config (JSON)
-Create the JSON config file to define which agent to run and how to invoke it.
+## Config file (optional)
+The bot stores `/model` and `/thinking` in a JSON file at:
+`~/.config/aipal/config.json` (or `$XDG_CONFIG_HOME/aipal/config.json`).
 
 Example:
 ```json
 {
   "model": "gpt-5.2",
-  "thinking": "medium",
-  "agent": "codex",
-  "agents": {
-    "codex": {
-      "type": "codex",
-      "cmd": "codex",
-      "args": "--json --skip-git-repo-check",
-      "template": "",
-      "output": "codex-json",
-      "session": { "strategy": "thread" },
-      "modelArg": "--model",
-      "thinkingArg": "--thinking"
-    },
-    "cloud-code": {
-      "type": "generic",
-      "cmd": "cloud-code",
-      "args": "",
-      "template": "cloud-code {prompt}",
-      "output": "text",
-      "session": { "strategy": "chat" }
-    }
-  }
+  "thinking": "medium"
 }
 ```
 
-## Template examples
-```
-CODEX_TEMPLATE=codex exec --json {prompt}
-```
-```
-CODEX_TEMPLATE=codex exec --json --model gpt-5.2 {prompt}
-```
-```
-# With resume (use {session} if you want to control the format)
-CODEX_TEMPLATE=codex exec resume {session} --json {prompt}
-```
+See `docs/configuration.md` for details.
 
 ## Security notes
 This bot executes local commands on your machine. Run it only on trusted hardware, keep the bot private, and avoid sharing the token. There is no built-in allowlist: anyone who can message the bot can execute the configured command.
@@ -128,11 +74,11 @@ This bot executes local commands on your machine. Run it only on trusted hardwar
 - Executes the command locally via `bash -lc`
 - If the agent outputs Codex-style JSON, stores `thread_id` and uses `exec resume`
 - Audio is downloaded, transcribed, then forwarded as text
-- Images are downloaded into `IMAGE_DIR` and included in the prompt
+- Images are downloaded into the image folder and included in the prompt
 
 ## Troubleshooting
 - `ENOENT parakeet-mlx`: install `parakeet-mlx` and ensure it is on PATH.
-- `Error processing response.`: check the agent command (`CODEX_CMD` / `CODEX_TEMPLATE`) and that it is executable.
+- `Error processing response.`: check that `codex` is installed and accessible on PATH.
 - Telegram `ECONNRESET`: usually transient network, retry.
 
 ## License
