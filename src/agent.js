@@ -54,6 +54,8 @@ function resolveAgentConfig() {
       output: 'codex-json',
       session: { strategy: 'thread' },
       label: 'codex',
+      modelArg: '--model',
+      thinkingArg: '--thinking',
     },
     'cloud-code': {
       type: 'generic',
@@ -118,12 +120,16 @@ function resolveSessionValue(agentConfig, chatId, threadId) {
   return '';
 }
 
-function buildFromTemplate(template, promptValue, sessionValue) {
+function buildFromTemplate(template, promptValue, sessionValue, modelValue, thinkingValue) {
   return template
     .split('{prompt}')
-    .join(promptValue)
+    .join(promptValue || '')
     .split('{session}')
-    .join(sessionValue ? shellQuote(sessionValue) : '')
+    .join(sessionValue || '')
+    .split('{model}')
+    .join(modelValue || '')
+    .split('{thinking}')
+    .join(thinkingValue || '')
     .trim();
 }
 
@@ -132,24 +138,60 @@ function resolvePromptValue(prompt, promptExpression) {
   return shellQuote(prompt);
 }
 
-function buildCodexCommand(prompt, threadId, agentConfig, sessionValue, promptExpression) {
+function appendOptionalArg(args, flag, value) {
+  if (!flag || !value) return args;
+  return `${args} ${flag} ${shellQuote(value)}`.trim();
+}
+
+function buildCodexCommand(
+  prompt,
+  threadId,
+  agentConfig,
+  sessionValue,
+  promptExpression,
+  modelValue,
+  thinkingValue
+) {
   const promptValue = resolvePromptValue(prompt, promptExpression);
   const template = agentConfig.template || '';
   const cmd = agentConfig.cmd || 'codex';
   const argsRaw = agentConfig.args || '';
+  const modelToken = modelValue ? shellQuote(modelValue) : '';
+  const thinkingToken = thinkingValue ? shellQuote(thinkingValue) : '';
 
   if (template) {
     const hasPrompt = template.includes('{prompt}');
     const hasSession = template.includes('{session}');
-    const base = hasPrompt || hasSession ? buildFromTemplate(template, promptValue, sessionValue) : template.trim();
+    const hasModel = template.includes('{model}');
+    const hasThinking = template.includes('{thinking}');
+    const base =
+      hasPrompt || hasSession || hasModel || hasThinking
+        ? buildFromTemplate(template, promptValue, sessionValue, modelToken, thinkingToken)
+        : template.trim();
     if (hasPrompt) {
-      return base;
+      let command = base;
+      if (!hasModel) {
+        command = appendOptionalArg(command, agentConfig.modelArg, modelValue);
+      }
+      if (!hasThinking) {
+        command = appendOptionalArg(command, agentConfig.thinkingArg, thinkingValue);
+      }
+      return command.trim();
     }
-    return `${base} ${promptValue}`.trim();
+    let command = `${base} ${promptValue}`.trim();
+    if (!hasModel) {
+      command = appendOptionalArg(command, agentConfig.modelArg, modelValue);
+    }
+    if (!hasThinking) {
+      command = appendOptionalArg(command, agentConfig.thinkingArg, thinkingValue);
+    }
+    return command.trim();
   }
 
   let args = normalizeExecArgs(argsRaw);
   args = ensureJsonArgs(args);
+  args = appendOptionalArg(args, agentConfig.modelArg, modelValue);
+  args = appendOptionalArg(args, agentConfig.thinkingArg, thinkingValue);
   if (!hasGitRepo()) {
     args = ensureSkipGitCheckArgs(args);
   }
@@ -159,7 +201,7 @@ function buildCodexCommand(prompt, threadId, agentConfig, sessionValue, promptEx
   return `${cmd} exec ${args} ${promptValue}`.trim();
 }
 
-function buildGenericCommand(prompt, agentConfig, sessionValue, promptExpression) {
+function buildGenericCommand(prompt, agentConfig, sessionValue, promptExpression, modelValue, thinkingValue) {
   const promptValue = resolvePromptValue(prompt, promptExpression);
   const template = agentConfig.template || '';
   const cmd = agentConfig.cmd || '';
@@ -170,22 +212,52 @@ function buildGenericCommand(prompt, agentConfig, sessionValue, promptExpression
   if (template) {
     const hasPrompt = template.includes('{prompt}');
     const hasSession = template.includes('{session}');
-    const base = hasPrompt || hasSession ? buildFromTemplate(template, promptValue, sessionValue) : template.trim();
+    const hasModel = template.includes('{model}');
+    const hasThinking = template.includes('{thinking}');
+    const base =
+      hasPrompt || hasSession || hasModel || hasThinking
+        ? buildFromTemplate(template, promptValue, sessionValue, modelValue ? shellQuote(modelValue) : '', thinkingValue ? shellQuote(thinkingValue) : '')
+        : template.trim();
     if (hasPrompt) {
-      return base;
+      let command = base;
+      if (!hasModel) {
+        command = appendOptionalArg(command, agentConfig.modelArg, modelValue);
+      }
+      if (!hasThinking) {
+        command = appendOptionalArg(command, agentConfig.thinkingArg, thinkingValue);
+      }
+      return command.trim();
     }
-    return `${base} ${promptValue}`.trim();
+    let command = `${base} ${promptValue}`.trim();
+    if (!hasModel) {
+      command = appendOptionalArg(command, agentConfig.modelArg, modelValue);
+    }
+    if (!hasThinking) {
+      command = appendOptionalArg(command, agentConfig.thinkingArg, thinkingValue);
+    }
+    return command.trim();
   }
-  return `${cmd} ${argsRaw} ${promptValue}`.trim();
+  let command = `${cmd} ${argsRaw}`.trim();
+  command = appendOptionalArg(command, agentConfig.modelArg, modelValue);
+  command = appendOptionalArg(command, agentConfig.thinkingArg, thinkingValue);
+  return `${command} ${promptValue}`.trim();
 }
 
 function buildAgentCommand(prompt, options, agentConfig) {
-  const { chatId, threadId, promptExpression } = options || {};
+  const { chatId, threadId, promptExpression, model, thinking } = options || {};
   const sessionValue = resolveSessionValue(agentConfig, chatId, threadId);
   if (agentConfig.type === 'codex') {
-    return buildCodexCommand(prompt, threadId, agentConfig, sessionValue, promptExpression);
+    return buildCodexCommand(
+      prompt,
+      threadId,
+      agentConfig,
+      sessionValue,
+      promptExpression,
+      model,
+      thinking
+    );
   }
-  return buildGenericCommand(prompt, agentConfig, sessionValue, promptExpression);
+  return buildGenericCommand(prompt, agentConfig, sessionValue, promptExpression, model, thinking);
 }
 
 function parseCodexJsonOutput(output) {
