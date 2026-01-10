@@ -12,6 +12,19 @@ const {
   parseAgentOutput,
   getAgentLabel,
 } = require('./agent');
+const { readConfig, updateConfig } = require('./config-store');
+const {
+  chunkText,
+  formatError,
+  extractCommandValue,
+  extensionFromMime,
+  extensionFromUrl,
+  getAudioPayload,
+  getImagePayload,
+  isPathInside,
+  extractImageTokens,
+  buildPrompt,
+} = require('./message-utils');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -45,6 +58,12 @@ const queues = new Map();
 const threads = new Map();
 let globalModel;
 let globalThinking;
+
+async function hydrateGlobalSettings() {
+  const config = await readConfig();
+  if (config.model) globalModel = config.model;
+  if (config.thinking) globalThinking = config.thinking;
+}
 
 function shellQuote(value) {
   const escaped = String(value).replace(/'/g, String.raw`'\''`);
@@ -114,29 +133,6 @@ async function waitForMarkers(session, begin, end, timeoutMs, label) {
   throw new Error(`Timeout waiting for ${label} response`);
 }
 
-function chunkText(text, size) {
-  const chunks = [];
-  for (let i = 0; i < text.length; i += size) {
-    chunks.push(text.slice(i, i + size));
-  }
-  return chunks;
-}
-
-function extractCommandValue(text) {
-  if (!text) return '';
-  return text.replace(/^\/\w+(?:@\w+)?\s*/i, '').trim();
-}
-
-function formatError(err) {
-  if (!err) return 'Unknown error';
-  const parts = [];
-  if (err.message) parts.push(err.message);
-  if (err.code) parts.push(`code: ${err.code}`);
-  if (err.stderr) parts.push(`stderr: ${String(err.stderr).trim()}`);
-  const message = parts.filter(Boolean).join('\n');
-  return message || String(err);
-}
-
 async function replyWithError(ctx, label, err) {
   const detail = formatError(err);
   const text = `${label}\n${detail}`.trim();
@@ -156,124 +152,6 @@ function startTyping(ctx) {
   send();
   const timer = setInterval(send, 4000);
   return () => clearInterval(timer);
-}
-
-function extensionFromMime(mimeType) {
-  if (!mimeType) return '';
-  const normalized = mimeType.toLowerCase();
-  if (normalized === 'audio/ogg') return '.ogg';
-  if (normalized === 'audio/mpeg') return '.mp3';
-  if (normalized === 'audio/mp4') return '.m4a';
-  if (normalized === 'audio/x-m4a') return '.m4a';
-  if (normalized === 'image/jpeg') return '.jpg';
-  if (normalized === 'image/jpg') return '.jpg';
-  if (normalized === 'image/png') return '.png';
-  if (normalized === 'image/webp') return '.webp';
-  if (normalized === 'image/gif') return '.gif';
-  return '';
-}
-
-function extensionFromUrl(url) {
-  try {
-    const ext = path.extname(new URL(url).pathname);
-    return ext || '';
-  } catch {
-    return '';
-  }
-}
-
-function getAudioPayload(message) {
-  if (!message) return null;
-  if (message.voice) {
-    return {
-      kind: 'voice',
-      fileId: message.voice.file_id,
-      mimeType: message.voice.mime_type || '',
-      fileName: '',
-    };
-  }
-  if (message.audio) {
-    return {
-      kind: 'audio',
-      fileId: message.audio.file_id,
-      mimeType: message.audio.mime_type || '',
-      fileName: message.audio.file_name || '',
-    };
-  }
-  if (message.document && String(message.document.mime_type || '').startsWith('audio/')) {
-    return {
-      kind: 'document',
-      fileId: message.document.file_id,
-      mimeType: message.document.mime_type || '',
-      fileName: message.document.file_name || '',
-    };
-  }
-  return null;
-}
-
-function getImagePayload(message) {
-  if (!message) return null;
-  if (Array.isArray(message.photo) && message.photo.length > 0) {
-    const best = message.photo[message.photo.length - 1];
-    return {
-      kind: 'photo',
-      fileId: best.file_id,
-      mimeType: 'image/jpeg',
-      fileName: '',
-    };
-  }
-  if (message.document && String(message.document.mime_type || '').startsWith('image/')) {
-    return {
-      kind: 'document',
-      fileId: message.document.file_id,
-      mimeType: message.document.mime_type || '',
-      fileName: message.document.file_name || '',
-    };
-  }
-  return null;
-}
-
-function isPathInside(baseDir, candidatePath) {
-  const base = path.resolve(baseDir);
-  const target = path.resolve(candidatePath);
-  if (base === target) return true;
-  return target.startsWith(base + path.sep);
-}
-
-function extractImageTokens(text) {
-  const imagePaths = [];
-  const tokenRegex = /\[\[image:([^\]]+)\]\]/g;
-  let match;
-  while ((match = tokenRegex.exec(text)) !== null) {
-    const raw = (match[1] || '').trim();
-    if (!raw) continue;
-    const normalized = raw.replace(/^file:\/\//, '');
-    const resolved = path.isAbsolute(normalized) ? normalized : path.join(IMAGE_DIR, normalized);
-    if (isPathInside(IMAGE_DIR, resolved)) {
-      imagePaths.push(resolved);
-    } else {
-      console.warn('Ignoring image path outside IMAGE_DIR:', resolved);
-    }
-  }
-  const cleanedText = text.replace(tokenRegex, '').trim();
-  return { cleanedText, imagePaths };
-}
-
-function buildPrompt(prompt, imagePaths = []) {
-  const lines = [];
-  const trimmed = (prompt || '').trim();
-  if (trimmed) lines.push(trimmed);
-  if (imagePaths.length > 0) {
-    lines.push('User sent image file(s):');
-    for (const imagePath of imagePaths) {
-      lines.push(`- ${imagePath}`);
-    }
-    lines.push('Read images from those paths if needed.');
-  }
-  lines.push(
-    `If you generate an image, save it under ${IMAGE_DIR} and reply with [[image:/absolute/path]] so the bot can send it.`
-  );
-  return lines.join('\n');
 }
 
 async function downloadTelegramFile(ctx, payload, options = {}) {
@@ -368,7 +246,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   const threadId = threads.get(chatId);
   const model = globalModel;
   const thinking = globalThinking;
-  const finalPrompt = buildPrompt(prompt, options.imagePaths || []);
+  const finalPrompt = buildPrompt(prompt, options.imagePaths || [], IMAGE_DIR);
   const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
   const promptExpression = '"$PROMPT"';
   const agentCmd = buildAgentCommand(
@@ -397,7 +275,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
 }
 
 async function replyWithResponse(ctx, response) {
-  const { cleanedText, imagePaths } = extractImageTokens(response || '');
+  const { cleanedText, imagePaths } = extractImageTokens(response || '', IMAGE_DIR);
   const text = cleanedText.trim();
   if (text) {
     for (const chunk of chunkText(text, 3500)) {
@@ -433,7 +311,7 @@ function enqueue(chatId, fn) {
 
 bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${AGENT_LABEL}.`));
 
-bot.command('model', (ctx) => {
+bot.command('model', async (ctx) => {
   const value = extractCommandValue(ctx.message.text);
   if (!value) {
     if (globalModel) {
@@ -443,11 +321,17 @@ bot.command('model', (ctx) => {
     }
     return;
   }
-  globalModel = value;
-  ctx.reply(`Model set to ${value}.`);
+  try {
+    globalModel = value;
+    await updateConfig({ model: value });
+    ctx.reply(`Model set to ${value}.`);
+  } catch (err) {
+    console.error(err);
+    await replyWithError(ctx, 'Failed to persist model.', err);
+  }
 });
 
-bot.command('thinking', (ctx) => {
+bot.command('thinking', async (ctx) => {
   const value = extractCommandValue(ctx.message.text);
   if (!value) {
     if (globalThinking) {
@@ -457,8 +341,14 @@ bot.command('thinking', (ctx) => {
     }
     return;
   }
-  globalThinking = value;
-  ctx.reply(`Thinking level set to ${value}.`);
+  try {
+    globalThinking = value;
+    await updateConfig({ thinking: value });
+    ctx.reply(`Thinking level set to ${value}.`);
+  } catch (err) {
+    console.error(err);
+    await replyWithError(ctx, 'Failed to persist thinking level.', err);
+  }
 });
 
 bot.command('reset', async (ctx) => {
@@ -562,6 +452,7 @@ bot.on(['photo', 'document'], (ctx) => {
 });
 
 startImageCleanup();
+hydrateGlobalSettings().catch((err) => console.warn('Failed to load config settings:', err));
 bot.launch();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));

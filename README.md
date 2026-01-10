@@ -38,6 +38,8 @@ Create `config.json` (or point `BOT_CONFIG_PATH` to another file) to pick the ag
 Example:
 ```json
 {
+  "model": "gpt-5.2",
+  "thinking": "medium",
   "agent": "codex",
   "agents": {
     "codex": {
@@ -80,7 +82,7 @@ Templates can use `{model}` and `{thinking}` placeholders. If omitted, the bot a
 npm start
 ```
 In Telegram: send text or audio. Use `/reset` to clear context and kill the tmux session for that chat.
-Use `/model <name>` and `/thinking <level>` to set global options.
+Use `/model <name>` and `/thinking <level>` to set global options (persisted to `config.json`).
 
 ## How it works
 - Creates a tmux session per chat (`codexbot-<chatId>`)
