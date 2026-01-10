@@ -46,7 +46,9 @@ Example:
       "args": "--json --skip-git-repo-check",
       "template": "",
       "output": "codex-json",
-      "session": { "strategy": "thread" }
+      "session": { "strategy": "thread" },
+      "modelArg": "--model",
+      "thinkingArg": "--thinking"
     },
     "cloud-code": {
       "type": "generic",
@@ -54,7 +56,9 @@ Example:
       "args": "",
       "template": "cloud-code {prompt}",
       "output": "text",
-      "session": { "strategy": "chat" }
+      "session": { "strategy": "chat" },
+      "modelArg": "",
+      "thinkingArg": ""
     },
     "gemini-cly": {
       "type": "generic",
@@ -62,17 +66,21 @@ Example:
       "args": "",
       "template": "gemini-cly {prompt}",
       "output": "text",
-      "session": { "strategy": "chat" }
+      "session": { "strategy": "chat" },
+      "modelArg": "",
+      "thinkingArg": ""
     }
   }
 }
 ```
+Templates can use `{model}` and `{thinking}` placeholders. If omitted, the bot appends `modelArg`/`thinkingArg` when set via `/model` or `/thinking`.
 
 ## Run
 ```bash
 npm start
 ```
 In Telegram: send text or audio. Use `/reset` to clear context and kill the tmux session for that chat.
+Use `/model <name>` and `/thinking <level>` to set per-chat options.
 
 ## How it works
 - Creates a tmux session per chat (`codexbot-<chatId>`)
