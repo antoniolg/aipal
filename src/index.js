@@ -1,0 +1,514 @@
+require('dotenv').config();
+
+const { Telegraf } = require('telegraf');
+const { execFile } = require('child_process');
+const { randomUUID } = require('crypto');
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
+const {
+  resolveAgentConfig,
+  buildAgentCommand,
+  parseAgentOutput,
+  getAgentLabel,
+} = require('./agent');
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error('Missing TELEGRAM_BOT_TOKEN');
+  process.exit(1);
+}
+
+const TMUX_SESSION_PREFIX = process.env.TMUX_SESSION_PREFIX || 'codexbot';
+const TMUX_LINES = process.env.TMUX_LINES || '-5000';
+const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000);
+
+const { agentName, agentConfig } = resolveAgentConfig();
+const AGENT_LABEL = getAgentLabel(agentName, agentConfig);
+const AGENT_TIMEOUT_MS = Number(agentConfig.timeoutMs || agentConfig.timeout_ms || CODEX_TIMEOUT_MS);
+const AGENT_TIMEOUT_SAFE_MS = Number.isFinite(AGENT_TIMEOUT_MS) ? AGENT_TIMEOUT_MS : CODEX_TIMEOUT_MS;
+
+const PARAKEET_CMD = process.env.PARAKEET_CMD || 'parakeet-mlx';
+const PARAKEET_MODEL = process.env.PARAKEET_MODEL;
+const PARAKEET_TIMEOUT_MS = Number(process.env.PARAKEET_TIMEOUT_MS || 120000);
+
+const IMAGE_DIR = path.resolve(
+  process.env.IMAGE_DIR || path.join(os.tmpdir(), 'telegram-codex', 'images')
+);
+const IMAGE_TTL_HOURS = Number(process.env.IMAGE_TTL_HOURS || 24);
+const IMAGE_CLEANUP_INTERVAL_MS = Number(
+  process.env.IMAGE_CLEANUP_INTERVAL_MS || 60 * 60 * 1000
+);
+
+const bot = new Telegraf(BOT_TOKEN);
+const queues = new Map();
+const threads = new Map();
+
+function execTmux(args) {
+  return new Promise((resolve, reject) => {
+    execFile('tmux', args, { encoding: 'utf8' }, (err, stdout, stderr) => {
+      if (err) {
+        err.stderr = stderr;
+        return reject(err);
+      }
+      resolve(stdout || '');
+    });
+  });
+}
+
+function execLocal(cmd, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: 'utf8', ...options }, (err, stdout, stderr) => {
+      if (err) {
+        err.stderr = stderr;
+        return reject(err);
+      }
+      resolve(stdout || '');
+    });
+  });
+}
+
+async function ensureSession(session) {
+  try {
+    await execTmux(['has-session', '-t', session]);
+  } catch {
+    await execTmux(['new-session', '-d', '-s', session]);
+  }
+}
+
+function buildSessionName(chatId) {
+  return `${TMUX_SESSION_PREFIX}-${chatId}`;
+}
+
+async function sendCommand(session, command) {
+  await execTmux(['send-keys', '-t', session, command, 'C-m']);
+}
+
+async function capturePane(session) {
+  return execTmux(['capture-pane', '-pt', session, '-S', TMUX_LINES]);
+}
+
+async function waitForMarkers(session, begin, end, timeoutMs, label) {
+  const beginMarker = `\n${begin}\n`;
+  const endMarker = `\n${end}\n`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const output = await capturePane(session);
+    const beginIdx = output.lastIndexOf(beginMarker);
+    if (beginIdx !== -1) {
+      const endIdx = output.indexOf(endMarker, beginIdx + beginMarker.length);
+      if (endIdx !== -1) {
+        const between = output.slice(beginIdx + beginMarker.length, endIdx);
+        return between.replace(/^\n+/, '').replace(/\n+$/, '');
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`Timeout waiting for ${label} response`);
+}
+
+function chunkText(text, size) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += size) {
+    chunks.push(text.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function formatError(err) {
+  if (!err) return 'Unknown error';
+  const parts = [];
+  if (err.message) parts.push(err.message);
+  if (err.code) parts.push(`code: ${err.code}`);
+  if (err.stderr) parts.push(`stderr: ${String(err.stderr).trim()}`);
+  const message = parts.filter(Boolean).join('\n');
+  return message || String(err);
+}
+
+async function replyWithError(ctx, label, err) {
+  const detail = formatError(err);
+  const text = `${label}\n${detail}`.trim();
+  for (const chunk of chunkText(text, 3500)) {
+    await ctx.reply(chunk);
+  }
+}
+
+function startTyping(ctx) {
+  const send = async () => {
+    try {
+      await ctx.sendChatAction('typing');
+    } catch (err) {
+      console.error('Typing error', err);
+    }
+  };
+  send();
+  const timer = setInterval(send, 4000);
+  return () => clearInterval(timer);
+}
+
+function extensionFromMime(mimeType) {
+  if (!mimeType) return '';
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'audio/ogg') return '.ogg';
+  if (normalized === 'audio/mpeg') return '.mp3';
+  if (normalized === 'audio/mp4') return '.m4a';
+  if (normalized === 'audio/x-m4a') return '.m4a';
+  if (normalized === 'image/jpeg') return '.jpg';
+  if (normalized === 'image/jpg') return '.jpg';
+  if (normalized === 'image/png') return '.png';
+  if (normalized === 'image/webp') return '.webp';
+  if (normalized === 'image/gif') return '.gif';
+  return '';
+}
+
+function extensionFromUrl(url) {
+  try {
+    const ext = path.extname(new URL(url).pathname);
+    return ext || '';
+  } catch {
+    return '';
+  }
+}
+
+function getAudioPayload(message) {
+  if (!message) return null;
+  if (message.voice) {
+    return {
+      kind: 'voice',
+      fileId: message.voice.file_id,
+      mimeType: message.voice.mime_type || '',
+      fileName: '',
+    };
+  }
+  if (message.audio) {
+    return {
+      kind: 'audio',
+      fileId: message.audio.file_id,
+      mimeType: message.audio.mime_type || '',
+      fileName: message.audio.file_name || '',
+    };
+  }
+  if (message.document && String(message.document.mime_type || '').startsWith('audio/')) {
+    return {
+      kind: 'document',
+      fileId: message.document.file_id,
+      mimeType: message.document.mime_type || '',
+      fileName: message.document.file_name || '',
+    };
+  }
+  return null;
+}
+
+function getImagePayload(message) {
+  if (!message) return null;
+  if (Array.isArray(message.photo) && message.photo.length > 0) {
+    const best = message.photo[message.photo.length - 1];
+    return {
+      kind: 'photo',
+      fileId: best.file_id,
+      mimeType: 'image/jpeg',
+      fileName: '',
+    };
+  }
+  if (message.document && String(message.document.mime_type || '').startsWith('image/')) {
+    return {
+      kind: 'document',
+      fileId: message.document.file_id,
+      mimeType: message.document.mime_type || '',
+      fileName: message.document.file_name || '',
+    };
+  }
+  return null;
+}
+
+function isPathInside(baseDir, candidatePath) {
+  const base = path.resolve(baseDir);
+  const target = path.resolve(candidatePath);
+  if (base === target) return true;
+  return target.startsWith(base + path.sep);
+}
+
+function extractImageTokens(text) {
+  const imagePaths = [];
+  const tokenRegex = /\[\[image:([^\]]+)\]\]/g;
+  let match;
+  while ((match = tokenRegex.exec(text)) !== null) {
+    const raw = (match[1] || '').trim();
+    if (!raw) continue;
+    const normalized = raw.replace(/^file:\/\//, '');
+    const resolved = path.isAbsolute(normalized) ? normalized : path.join(IMAGE_DIR, normalized);
+    if (isPathInside(IMAGE_DIR, resolved)) {
+      imagePaths.push(resolved);
+    } else {
+      console.warn('Ignoring image path outside IMAGE_DIR:', resolved);
+    }
+  }
+  const cleanedText = text.replace(tokenRegex, '').trim();
+  return { cleanedText, imagePaths };
+}
+
+function buildPrompt(prompt, imagePaths = []) {
+  const lines = [];
+  const trimmed = (prompt || '').trim();
+  if (trimmed) lines.push(trimmed);
+  if (imagePaths.length > 0) {
+    lines.push('User sent image file(s):');
+    for (const imagePath of imagePaths) {
+      lines.push(`- ${imagePath}`);
+    }
+    lines.push('Read images from those paths if needed.');
+  }
+  lines.push(
+    `If you generate an image, save it under ${IMAGE_DIR} and reply with [[image:/absolute/path]] so the bot can send it.`
+  );
+  return lines.join('\n');
+}
+
+async function downloadTelegramFile(ctx, payload, options = {}) {
+  const {
+    dir = path.join(os.tmpdir(), 'telegram-codex'),
+    prefix = 'file',
+    errorLabel = 'file',
+  } = options;
+  const link = await ctx.telegram.getFileLink(payload.fileId);
+  const url = typeof link === 'string' ? link : link.href;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download ${errorLabel} (${response.status})`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await fs.mkdir(dir, { recursive: true });
+  const extFromName = payload.fileName ? path.extname(payload.fileName) : '';
+  const ext = extFromName || extensionFromMime(payload.mimeType) || extensionFromUrl(url) || '.bin';
+  const filePath = path.join(dir, `${prefix}-${randomUUID()}${ext}`);
+  await fs.writeFile(filePath, buffer);
+  return filePath;
+}
+
+async function transcribeWithParakeet(audioPath) {
+  const outputDir = path.join(os.tmpdir(), 'parakeet-mlx');
+  await fs.mkdir(outputDir, { recursive: true });
+  const outputTemplate = `parakeet-${randomUUID()}`;
+  const args = [
+    audioPath,
+    '--output-dir',
+    outputDir,
+    '--output-format',
+    'txt',
+    '--output-template',
+    outputTemplate,
+  ];
+  if (PARAKEET_MODEL) {
+    args.push('--model', PARAKEET_MODEL);
+  }
+  await execLocal(PARAKEET_CMD, args, { timeout: PARAKEET_TIMEOUT_MS });
+  const outputPath = path.join(outputDir, `${outputTemplate}.txt`);
+  const text = await fs.readFile(outputPath, 'utf8');
+  return { text: text.trim(), outputPath };
+}
+
+async function safeUnlink(filePath) {
+  if (!filePath) return;
+  try {
+    await fs.unlink(filePath);
+  } catch {}
+}
+
+async function cleanupOldFiles(dir, maxAgeMs) {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const now = Date.now();
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const filePath = path.join(dir, entry.name);
+      const stat = await fs.stat(filePath);
+      if (now - stat.mtimeMs > maxAgeMs) {
+        await safeUnlink(filePath);
+      }
+    }
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') {
+      console.warn('Image cleanup failed:', err);
+    }
+  }
+}
+
+function startImageCleanup() {
+  if (!Number.isFinite(IMAGE_TTL_HOURS) || IMAGE_TTL_HOURS <= 0) return;
+  const maxAgeMs = IMAGE_TTL_HOURS * 60 * 60 * 1000;
+  const run = () => cleanupOldFiles(IMAGE_DIR, maxAgeMs);
+  run();
+  if (Number.isFinite(IMAGE_CLEANUP_INTERVAL_MS) && IMAGE_CLEANUP_INTERVAL_MS > 0) {
+    const timer = setInterval(run, IMAGE_CLEANUP_INTERVAL_MS);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  }
+}
+
+async function runAgentForChat(chatId, prompt, options = {}) {
+  const session = buildSessionName(chatId);
+  await ensureSession(session);
+
+  const uuid = randomUUID();
+  const begin = `<<<BEGIN:${uuid}>>>`;
+  const end = `<<<END:${uuid}>>>`;
+  const threadId = threads.get(chatId);
+  const finalPrompt = buildPrompt(prompt, options.imagePaths || []);
+  const agentCmd = buildAgentCommand(finalPrompt, { chatId, threadId }, agentConfig);
+  const command = `printf '\\n${begin}\\n'; ${agentCmd}; printf '\\n${end}\\n'`;
+
+  await sendCommand(session, command);
+  const output = await waitForMarkers(session, begin, end, AGENT_TIMEOUT_SAFE_MS, AGENT_LABEL);
+  const parsed = parseAgentOutput(output, agentConfig);
+  if (parsed.threadId) {
+    threads.set(chatId, parsed.threadId);
+  }
+  if (parsed.sawJson) {
+    return parsed.text || output;
+  }
+  return parsed.text || output;
+}
+
+async function replyWithResponse(ctx, response) {
+  const { cleanedText, imagePaths } = extractImageTokens(response || '');
+  const text = cleanedText.trim();
+  if (text) {
+    for (const chunk of chunkText(text, 3500)) {
+      await ctx.reply(chunk);
+    }
+  }
+  const uniqueImages = Array.from(new Set(imagePaths));
+  for (const imagePath of uniqueImages) {
+    try {
+      if (!isPathInside(IMAGE_DIR, imagePath)) {
+        console.warn('Skipping image outside IMAGE_DIR:', imagePath);
+        continue;
+      }
+      await fs.access(imagePath);
+      await ctx.replyWithPhoto({ source: imagePath });
+    } catch (err) {
+      console.warn('Failed to send image:', imagePath, err);
+    }
+  }
+  if (!text && uniqueImages.length === 0) {
+    await ctx.reply('(no response)');
+  }
+}
+
+function enqueue(chatId, fn) {
+  const prev = queues.get(chatId) || Promise.resolve();
+  const next = prev.then(fn).catch((err) => {
+    console.error('Queue error', err);
+  });
+  queues.set(chatId, next);
+  return next;
+}
+
+bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${AGENT_LABEL}.`));
+
+bot.command('reset', async (ctx) => {
+  const session = buildSessionName(ctx.chat.id);
+  threads.delete(ctx.chat.id);
+  try {
+    await execTmux(['kill-session', '-t', session]);
+    ctx.reply('Session reset.');
+  } catch {
+    ctx.reply('No active session.');
+  }
+});
+
+bot.on('text', (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text.trim();
+  if (!text) return;
+
+  enqueue(chatId, async () => {
+    const stopTyping = startTyping(ctx);
+    try {
+      const response = await runAgentForChat(chatId, text);
+      stopTyping();
+      await replyWithResponse(ctx, response);
+    } catch (err) {
+      console.error(err);
+      stopTyping();
+      await replyWithError(ctx, 'Error processing response.', err);
+    }
+  });
+});
+
+bot.on(['voice', 'audio', 'document'], (ctx) => {
+  const chatId = ctx.chat.id;
+  const payload = getAudioPayload(ctx.message);
+  if (!payload) return;
+
+  enqueue(chatId, async () => {
+    const stopTyping = startTyping(ctx);
+    let audioPath;
+    let transcriptPath;
+    try {
+      audioPath = await downloadTelegramFile(ctx, payload, {
+        prefix: 'audio',
+        errorLabel: 'audio',
+      });
+      const { text, outputPath } = await transcribeWithParakeet(audioPath);
+      transcriptPath = outputPath;
+      if (!text) {
+        await ctx.reply("I couldn't transcribe the audio.");
+        return;
+      }
+      const response = await runAgentForChat(chatId, text);
+      await replyWithResponse(ctx, response);
+    } catch (err) {
+      console.error(err);
+      if (err && err.code === 'ENOENT') {
+        await replyWithError(
+          ctx,
+          "I can't find parakeet-mlx. Install it and try again.",
+          err
+        );
+      } else {
+        await replyWithError(ctx, 'Error processing audio.', err);
+      }
+    } finally {
+      stopTyping();
+      await safeUnlink(audioPath);
+      await safeUnlink(transcriptPath);
+    }
+  });
+});
+
+bot.on(['photo', 'document'], (ctx) => {
+  const chatId = ctx.chat.id;
+  const payload = getImagePayload(ctx.message);
+  if (!payload) return;
+
+  enqueue(chatId, async () => {
+    const stopTyping = startTyping(ctx);
+    let imagePath;
+    try {
+      imagePath = await downloadTelegramFile(ctx, payload, {
+        dir: IMAGE_DIR,
+        prefix: 'image',
+        errorLabel: 'image',
+      });
+      const caption = (ctx.message.caption || '').trim();
+      const prompt = caption || 'User sent an image.';
+      const response = await runAgentForChat(chatId, prompt, {
+        imagePaths: [imagePath],
+      });
+      await replyWithResponse(ctx, response);
+    } catch (err) {
+      console.error(err);
+      await replyWithError(ctx, 'Error processing image.', err);
+    } finally {
+      stopTyping();
+    }
+  });
+});
+
+startImageCleanup();
+bot.launch();
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
