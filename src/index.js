@@ -196,7 +196,6 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
     `${agentCmd}`,
   ].join(' ');
-  console.log('[agent] command:', command);
 
   const output = await execLocal('bash', ['-lc', command]);
   const parsed = parseAgentOutput(output, agentConfig);
