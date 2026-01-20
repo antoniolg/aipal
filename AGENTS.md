@@ -12,4 +12,3 @@ Style:
 - Ask when needed.
 
 Notes:
-- Calendar: when asked to create events, use the `gog` CLI. Default account: `antonio@devexpert.io`. Main calendars: `primary` and "Fuera de oficina". Rule: work/meetings/projects/clients/team -> `primary`; personal that blocks the calendar (medico, tramites, errands, etc.) -> "Fuera de oficina"; if in doubt, ask.
