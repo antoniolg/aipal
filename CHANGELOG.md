@@ -28,5 +28,9 @@ All notable changes to this project will be documented in this file.
 - Gemini runs in headless JSON mode with YOLO auto-approval.
 - `/model` support removed; model is no longer passed between CLIs.
 
+## [0.1.6] - 2026-01-20
+### Added
+- Gemini sessions are resumed by looking up the latest `gemini --list-sessions` entry.
+
 ## [0.1.2] - 2026-01-13
 - Earlier changes were tracked only in GitHub releases.

@@ -427,6 +427,30 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
   }
   const parsed = agent.parseOutput(output);
+  if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
+    try {
+      const listCommand = agent.listSessionsCommand();
+      let listCommandToRun = listCommand;
+      if (agent.needsPty) {
+        listCommandToRun = wrapCommandWithPty(listCommandToRun);
+      }
+      if (agent.mergeStderr) {
+        listCommandToRun = `${listCommandToRun} 2>&1`;
+      }
+      const listOutput = await execLocal('bash', ['-lc', listCommandToRun], {
+        timeout: AGENT_TIMEOUT_MS,
+        maxBuffer: AGENT_MAX_BUFFER,
+      });
+      if (typeof agent.parseSessionList === 'function') {
+        const resolved = agent.parseSessionList(listOutput);
+        if (resolved) {
+          parsed.threadId = resolved;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to resolve agent session id:', err?.message || err);
+    }
+  }
   if (parsed.threadId) {
     threads.set(chatId, parsed.threadId);
   }

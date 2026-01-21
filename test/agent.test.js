@@ -56,11 +56,12 @@ test('parseAgentOutput extracts claude session and result', () => {
 
 test('buildAgentCommand builds gemini headless command', () => {
   const agent = getAgent('gemini');
-  const command = agent.buildCommand({ prompt: 'hello' });
+  const command = agent.buildCommand({ prompt: 'hello', threadId: 'session-3' });
   assert.match(command, /^gemini /);
   assert.match(command, /-p 'hello'/);
   assert.match(command, /--output-format json/);
   assert.match(command, /--yolo/);
+  assert.match(command, /--resume session-3/);
 });
 
 test('parseAgentOutput extracts gemini response', () => {
@@ -70,4 +71,15 @@ test('parseAgentOutput extracts gemini response', () => {
   assert.equal(parsed.threadId, undefined);
   assert.equal(parsed.text, 'hola');
   assert.equal(parsed.sawJson, true);
+});
+
+test('parseSessionList extracts latest gemini session id', () => {
+  const agent = getAgent('gemini');
+  const output = [
+    'Available sessions for this project (2):',
+    '  1. Foo (1 minute ago) [11111111-1111-1111-1111-111111111111]',
+    '  2. Bar (just now) [22222222-2222-2222-2222-222222222222]',
+  ].join('\n');
+  const sessionId = agent.parseSessionList(output);
+  assert.equal(sessionId, '22222222-2222-2222-2222-222222222222');
 });
