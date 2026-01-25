@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7] - 2026-01-25
+### Added
+- Internal cron scheduler for scheduled tasks within the same bot session.
+- `/cron` command to list jobs, reload config, and get chat ID.
+- Cron jobs config in `~/.config/aipal/cron.json`.
+
 ## [0.1.6] - 2026-01-21
 ### Added
 - Gemini sessions are resumed by looking up the latest `gemini --list-sessions` entry.
