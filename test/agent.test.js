@@ -73,6 +73,7 @@ test('parseAgentOutput extracts gemini response', () => {
   assert.equal(parsed.sawJson, true);
 });
 
+
 test('parseSessionList extracts latest gemini session id', () => {
   const agent = getAgent('gemini');
   const output = [
@@ -83,3 +84,32 @@ test('parseSessionList extracts latest gemini session id', () => {
   const sessionId = agent.parseSessionList(output);
   assert.equal(sessionId, '22222222-2222-2222-2222-222222222222');
 });
+
+test('buildAgentCommand builds opencode command with env and json flag', () => {
+  const agent = getAgent('opencode');
+  const command = agent.buildCommand({ prompt: 'hello', threadId: 'sess-123' });
+  assert.match(command, /^OPENCODE_PERMISSION='\{"\*": "allow"\}' opencode run /);
+  assert.match(command, /--format json/);
+  assert.match(command, /--model 'opencode\/gpt-5-nano'/);
+  assert.match(command, /--continue/);
+  assert.match(command, /--session 'sess-123'/);
+  assert.match(command, /'hello'/);
+  assert.match(command, /< \/dev\/null/);
+});
+
+test('parseAgentOutput extracts opencode ndjson result', () => {
+  const agent = getAgent('opencode');
+  const output = [
+    'INFO log message',
+    JSON.stringify({ type: 'step_start', sessionID: 'sess-456' }),
+    JSON.stringify({ type: 'text', sessionID: 'sess-456', part: { text: 'hi ' } }),
+    JSON.stringify({ type: 'text', sessionID: 'sess-456', part: { text: 'opencode' } }),
+    JSON.stringify({ type: 'step_finish', sessionID: 'sess-456' }),
+  ].join('\n');
+
+  const parsed = agent.parseOutput(output);
+  assert.equal(parsed.threadId, 'sess-456');
+  assert.equal(parsed.text, 'hi opencode');
+  assert.equal(parsed.sawJson, true);
+});
+

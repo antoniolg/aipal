@@ -163,6 +163,7 @@ function execLocal(cmd, args, options = {}) {
     execFile(cmd, args, { encoding: 'utf8', timeout, maxBuffer, ...rest }, (err, stdout, stderr) => {
       if (err) {
         err.stderr = stderr;
+        err.stdout = stdout;
         if (timeout && err.killed) {
           const timeoutErr = new Error(`Command timed out after ${timeout}ms`);
           timeoutErr.code = 'ETIMEDOUT';
@@ -326,7 +327,7 @@ async function safeUnlink(filePath) {
   if (!filePath) return;
   try {
     await fs.unlink(filePath);
-  } catch {}
+  } catch { }
 }
 
 async function cleanupOldFiles(dir, maxAgeMs, label) {
@@ -422,6 +423,12 @@ async function runAgentForChat(chatId, prompt, options = {}) {
       timeout: AGENT_TIMEOUT_MS,
       maxBuffer: AGENT_MAX_BUFFER,
     });
+  } catch (err) {
+    if (err.stdout) {
+      output = err.stdout;
+    } else {
+      throw err;
+    }
   } finally {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
@@ -556,11 +563,11 @@ bot.command('thinking', async (ctx) => {
 bot.command('agent', async (ctx) => {
   const value = extractCommandValue(ctx.message.text);
   if (!value) {
-    ctx.reply(`Current agent: ${getAgentLabel(globalAgent)}. Use /agent codex|claude|gemini.`);
+    ctx.reply(`Current agent: ${getAgentLabel(globalAgent)}. Use /agent codex|claude|gemini|opencode.`);
     return;
   }
   if (!isKnownAgent(value)) {
-    ctx.reply('Unknown agent. Use /agent codex|claude|gemini.');
+    ctx.reply('Unknown agent. Use /agent codex|claude|gemini|opencode.');
     return;
   }
   const normalized = normalizeAgent(value);
