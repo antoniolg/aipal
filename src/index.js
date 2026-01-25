@@ -102,6 +102,8 @@ const AGENT_MAX_BUFFER = readNumberEnv(
 );
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
+const { ScriptManager } = require('./script-manager');
+
 const bot = new Telegraf(BOT_TOKEN);
 const queues = new Map();
 const threads = new Map();
@@ -109,6 +111,98 @@ const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
+
+const scriptManager = new ScriptManager(SCRIPTS_DIR);
+
+bot.command('help', async (ctx) => {
+  const builtIn = [
+    '/start - Hello world',
+    '/agent &lt;name&gt; - Switch agent (codex, claude, gemini)',
+    '/thinking &lt;level&gt; - Set reasoning effort',
+    '/reset - Reset session',
+    '/help - Show this help',
+    '/document_scripts - Auto-document available scripts',
+  ];
+
+  let scripts = [];
+  try {
+    scripts = await scriptManager.listScripts();
+  } catch (err) {
+    console.error('Failed to list scripts', err);
+    scripts = [];
+  }
+
+  const scriptLines = scripts.map((s) => {
+    const desc = s.description ? ` - ${s.description}` : '';
+    return `• /${s.name}${desc}`;
+  });
+
+  const message = [
+    '<b>Built-in commands:</b>',
+    ...builtIn,
+    '',
+    '<b>Scripts:</b>',
+    ...(scriptLines.length ? scriptLines : ['(none)']),
+  ].join('\n');
+
+  ctx.reply(message, { parse_mode: 'HTML' });
+});
+
+bot.command('document_scripts', async (ctx) => {
+  const chatId = ctx.chat.id;
+  await ctx.reply('Scanning for undocumented scripts...');
+
+  let scripts = [];
+  try {
+    scripts = await scriptManager.listScripts();
+  } catch (err) {
+    return replyWithError(ctx, 'Failed to list scripts', err);
+  }
+
+  const undocumented = scripts.filter(s => !s.description);
+
+  if (undocumented.length === 0) {
+    return ctx.reply('All scripts are already documented!');
+  }
+
+  await ctx.reply(`Found ${undocumented.length} undocumented scripts. processing...`);
+
+  // Process sequentially to be nice to the agent
+  for (const script of undocumented) {
+    try {
+      const content = await scriptManager.getScriptContent(script.name);
+      const prompt = `Please analyze the following script and provide a very short (max 10 words) description of what it does. Return ONLY the description, no quotes, no extra text.\n\nScript:\n${content.slice(0, 2000)}`; // limit content size
+
+      // Re-use runAgentForChat but we need to bypass the thread/history or use a temp one?
+      // Actually, we can use the current chat's agent/thread but it might be confusing context.
+      // Let's force a one-off interaction if possible, or just use the current agent.
+      // We'll use runAgentForChat but explicit prompt.
+
+      // To avoid polluting the user's conversation history too much or confusing the agent, 
+      // maybe strictly framed prompt is enough.
+
+      /* 
+         We can't easily bypass the thread logic in runAgentForChat without refactoring.
+         But we can just use the tool directly if we imported agents.
+         Actually, runAgentForChat handles pty/etc.
+         Let's try to use runAgentForChat and then we might want to suppress the reply to user?
+         Wait, runAgentForChat returns the text. We can use it.
+      */
+
+      const description = await runAgentForChat(chatId, prompt);
+      const cleaned = description.trim().replace(/^['"]|['"]$/g, '');
+
+      await scriptManager.updateScriptMetadata(script.name, { description: cleaned });
+      await ctx.reply(`Documented ${script.name}: ${cleaned}`);
+
+    } catch (err) {
+      console.error(`Failed to document ${script.name}`, err);
+      await ctx.reply(`Failed to document ${script.name}: ${err.message}`);
+    }
+  }
+
+  await ctx.reply('Documentation complete. Use /help to see the results.');
+});
 
 bot.catch((err) => {
   console.error('Bot error', err);
