@@ -76,6 +76,25 @@ function parseOutput(output) {
     return { text, threadId, sawJson: true };
 }
 
+function listModelsCommand() {
+    // Prepend permission env
+    return `OPENCODE_PERMISSION=${shellQuote(OPENCODE_PERMISSION)} ${OPENCODE_CMD} models`;
+}
+
+function parseModelList(output) {
+    const lines = String(output || '').split(/\r?\n/);
+    const models = [];
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        // Filter logs or irrelevant info
+        if (trimmed.startsWith('INFO')) continue;
+        // Assuming simple list
+        models.push(trimmed);
+    }
+    return models.join('\n');
+}
+
 module.exports = {
     id: 'opencode',
     label: 'opencode',
@@ -83,4 +102,7 @@ module.exports = {
     mergeStderr: false,
     buildCommand,
     parseOutput,
+    listModelsCommand,
+    parseModelList,
+    defaultModel: DEFAULT_MODEL,
 };

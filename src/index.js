@@ -109,6 +109,7 @@ const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
+let globalModels = {};
 
 bot.catch((err) => {
   console.error('Bot error', err);
@@ -145,6 +146,7 @@ async function buildBootstrapContext() {
 async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.agent) globalAgent = normalizeAgent(config.agent);
+  if (config.models) globalModels = { ...config.models };
 }
 
 function shellQuote(value) {
@@ -401,6 +403,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     promptExpression,
     threadId,
     thinking,
+    model: globalModels[globalAgent],
   });
   const command = [
     `PROMPT_B64=${shellQuote(promptBase64)};`,
@@ -588,6 +591,55 @@ bot.command('agent', async (ctx) => {
 bot.command('reset', async (ctx) => {
   threads.delete(ctx.chat.id);
   ctx.reply('Session reset.');
+});
+
+bot.command('model', async (ctx) => {
+  const value = extractCommandValue(ctx.message.text);
+  const agent = getAgent(globalAgent);
+
+  if (!value) {
+    const current = globalModels[globalAgent] || agent.defaultModel || '(default)';
+    let msg = `Current model for ${agent.label}: ${current}. Use /model <model_id> to change.`;
+
+    // Try to list available models if the agent supports it
+    if (typeof agent.listModelsCommand === 'function') {
+      const stopTyping = startTyping(ctx);
+      try {
+        const cmd = agent.listModelsCommand();
+        let cmdToRun = cmd;
+        if (agent.needsPty) cmdToRun = wrapCommandWithPty(cmdToRun);
+
+        const output = await execLocal('bash', ['-lc', cmdToRun], { timeout: 30000 }); // Short timeout for listing
+
+        // Use agent-specific parser if available, otherwise just dump output
+        let modelsList = output.trim();
+        if (typeof agent.parseModelList === 'function') {
+          modelsList = agent.parseModelList(modelsList);
+        }
+
+        if (modelsList) {
+          msg += `\n\nAvailable models:\n${modelsList}`;
+        }
+        stopTyping();
+      } catch (err) {
+        msg += `\n(Failed to list models: ${err.message})`;
+        stopTyping();
+      }
+    }
+
+    ctx.reply(msg);
+    return;
+  }
+
+  try {
+    globalModels[globalAgent] = value;
+    await updateConfig({ models: globalModels });
+
+    ctx.reply(`Model for ${agent.label} set to ${value}.`);
+  } catch (err) {
+    console.error(err);
+    await replyWithError(ctx, 'Failed to persist model setting.', err);
+  }
 });
 
 bot.on('text', (ctx) => {

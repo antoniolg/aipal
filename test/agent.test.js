@@ -113,3 +113,10 @@ test('parseAgentOutput extracts opencode ndjson result', () => {
   assert.equal(parsed.sawJson, true);
 });
 
+test('listModelsCommand builds opencode models command', () => {
+  const agent = getAgent('opencode');
+  const command = agent.listModelsCommand();
+  assert.match(command, /opencode models/);
+});
+
+
