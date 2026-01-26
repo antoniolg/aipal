@@ -11,7 +11,7 @@ Minimal Telegram bot that forwards messages to a local CLI agent (Codex by defau
 - Queues requests per chat to avoid overlapping runs
 - Keeps agent session state when JSON output is detected
 - Handles text, audio (via Parakeet), images, and documents
-- Supports `/thinking` and `/agent` to tweak the agent at runtime
+- Supports `/thinking`, `/agent`, and `/cron` for runtime tweaks
 
 ## Requirements
 - Node.js 18+
@@ -44,7 +44,15 @@ Open Telegram, send `/start`, then any message.
 - `/reset`: clear the chat session (drops the stored session id)
 - `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
 - `/agent <codex|claude|gemini>`: set the CLI agent (persisted in `config.json`)
-- `/<script> [args]`: run an executable script from `~/.config/aibot/scripts`
+- `/cron [list|reload|chatid]`: manage cron jobs (see below)
+- `/<script> [args]`: run an executable script from `~/.config/aipal/scripts`
+
+### Cron jobs
+Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).
+
+- `/cron chatid`: prints your chat ID (use this value as `cronChatId`).
+- `/cron list`: lists configured jobs.
+- `/cron reload`: reloads `cron.json` without restarting the bot.
 
 ### Images in responses
 If the agent generates an image, save it under the image folder (default: OS temp under `aipal/images`) and reply with:
@@ -74,7 +82,8 @@ The bot stores `/agent` in a JSON file at:
 Example:
 ```json
 {
-  "agent": "codex"
+  "agent": "codex",
+  "cronChatId": 123456789
 }
 ```
 

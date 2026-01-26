@@ -18,11 +18,19 @@ const {
   CONFIG_PATH,
   MEMORY_PATH,
   SOUL_PATH,
+  loadThreads,
   readConfig,
   readMemory,
   readSoul,
+  saveThreads,
   updateConfig,
 } = require('./config-store');
+const {
+  CRON_PATH,
+  loadCronJobs,
+  saveCronJobs,
+  startCronScheduler,
+} = require('./cron-scheduler');
 const {
   chunkText,
   formatError,
@@ -131,7 +139,8 @@ if (ALLOWED_USERS.length > 0) {
 }
 
 const queues = new Map();
-const threads = new Map();
+let threads = new Map();
+let threadsPersist = Promise.resolve();
 const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
@@ -145,6 +154,17 @@ function readNumberEnv(raw, fallback) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return value;
+}
+
+function getThreadKey(chatId) {
+  return String(chatId);
+}
+
+function persistThreads() {
+  threadsPersist = threadsPersist
+    .catch(() => {})
+    .then(() => saveThreads(threads));
+  return threadsPersist;
 }
 
 async function buildBootstrapContext() {
@@ -169,11 +189,12 @@ async function buildBootstrapContext() {
   return lines.join('\n');
 }
 
-
+let cronScheduler = null;
 
 async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.agent) globalAgent = normalizeAgent(config.agent);
+  return config;
 }
 
 function shellQuote(value) {
@@ -404,7 +425,8 @@ function startDocumentCleanup() {
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const threadId = threads.get(chatId);
+  const threadKey = getThreadKey(chatId);
+  const threadId = threads.get(threadKey);
   const agent = getAgent(globalAgent);
   let promptWithContext = prompt;
   if (!threadId) {
@@ -481,7 +503,8 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     }
   }
   if (parsed.threadId) {
-    threads.set(chatId, parsed.threadId);
+    threads.set(threadKey, parsed.threadId);
+    persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
   }
   if (parsed.sawJson) {
     return parsed.text || output;
@@ -599,6 +622,7 @@ bot.command('agent', async (ctx) => {
     await updateConfig({ agent: normalized });
     if (changed) {
       threads.clear();
+      await persistThreads();
     }
     ctx.reply(`Agent set to ${getAgentLabel(globalAgent)}.`);
   } catch (err) {
@@ -608,8 +632,50 @@ bot.command('agent', async (ctx) => {
 });
 
 bot.command('reset', async (ctx) => {
-  threads.delete(ctx.chat.id);
+  threads.delete(getThreadKey(ctx.chat.id));
+  persistThreads().catch((err) => console.warn('Failed to persist threads after reset:', err));
   ctx.reply('Session reset.');
+});
+
+bot.command('cron', async (ctx) => {
+  const value = extractCommandValue(ctx.message.text);
+  const parts = value ? value.split(/\s+/) : [];
+  const subcommand = parts[0]?.toLowerCase();
+
+  if (!subcommand || subcommand === 'list') {
+    try {
+      const jobs = await loadCronJobs();
+      if (jobs.length === 0) {
+        await ctx.reply('No cron jobs configured.');
+        return;
+      }
+      const lines = jobs.map((j) => {
+        const status = j.enabled ? '✅' : '❌';
+        return `${status} ${j.id}: ${j.cron} → "${j.prompt}"`;
+      });
+      await ctx.reply(`Cron jobs:\n${lines.join('\n')}`);
+    } catch (err) {
+      await replyWithError(ctx, 'Failed to list cron jobs.', err);
+    }
+    return;
+  }
+
+  if (subcommand === 'reload') {
+    if (cronScheduler) {
+      const count = await cronScheduler.reload();
+      await ctx.reply(`Cron jobs reloaded. ${count} job(s) scheduled.`);
+    } else {
+      await ctx.reply('Cron scheduler not running. Set cronChatId in config.json first.');
+    }
+    return;
+  }
+
+  if (subcommand === 'chatid') {
+    await ctx.reply(`Your chat ID: ${ctx.chat.id}`);
+    return;
+  }
+
+  await ctx.reply('Usage: /cron [list|reload|chatid]');
 });
 
 bot.on('text', (ctx) => {
@@ -753,9 +819,82 @@ bot.on('document', (ctx) => {
   });
 });
 
+async function sendResponseToChat(chatId, response) {
+  const { cleanedText: afterImages, imagePaths } = extractImageTokens(
+    response || '',
+    IMAGE_DIR
+  );
+  const { cleanedText, documentPaths } = extractDocumentTokens(
+    afterImages,
+    DOCUMENT_DIR
+  );
+  const text = cleanedText.trim();
+  if (text) {
+    for (const chunk of chunkMarkdown(text, 3000)) {
+      const formatted = markdownToTelegramHtml(chunk) || chunk;
+      await bot.telegram.sendMessage(chatId, formatted, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+    }
+  }
+  const uniqueImages = Array.from(new Set(imagePaths));
+  for (const imagePath of uniqueImages) {
+    try {
+      if (!isPathInside(IMAGE_DIR, imagePath)) continue;
+      await fs.access(imagePath);
+      await bot.telegram.sendPhoto(chatId, { source: imagePath });
+    } catch (err) {
+      console.warn('Failed to send image:', imagePath, err);
+    }
+  }
+  const uniqueDocuments = Array.from(new Set(documentPaths));
+  for (const documentPath of uniqueDocuments) {
+    try {
+      if (!isPathInside(DOCUMENT_DIR, documentPath)) continue;
+      await fs.access(documentPath);
+      await bot.telegram.sendDocument(chatId, { source: documentPath });
+    } catch (err) {
+      console.warn('Failed to send document:', documentPath, err);
+    }
+  }
+}
+
+async function handleCronTrigger(chatId, prompt, options = {}) {
+  const { jobId } = options;
+  console.info(`Cron job ${jobId} executing for chat ${chatId}`);
+  try {
+    await bot.telegram.sendChatAction(chatId, 'typing');
+    const response = await runAgentForChat(chatId, prompt);
+    await sendResponseToChat(chatId, response);
+  } catch (err) {
+    console.error(`Cron job ${jobId} failed:`, err);
+    try {
+      await bot.telegram.sendMessage(chatId, `Cron job "${jobId}" failed: ${err.message}`);
+    } catch {}
+  }
+}
+
 startImageCleanup();
 startDocumentCleanup();
-hydrateGlobalSettings().catch((err) => console.warn('Failed to load config settings:', err));
+loadThreads()
+  .then((loaded) => {
+    threads = loaded;
+    console.info(`Loaded ${threads.size} thread(s) from disk`);
+  })
+  .catch((err) => console.warn('Failed to load threads:', err));
+hydrateGlobalSettings()
+  .then((config) => {
+    if (config.cronChatId) {
+      cronScheduler = startCronScheduler({
+        chatId: config.cronChatId,
+        onTrigger: handleCronTrigger,
+      });
+    } else {
+      console.info('Cron scheduler disabled (no cronChatId in config)');
+    }
+  })
+  .catch((err) => console.warn('Failed to load config settings:', err));
 bot.launch();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
