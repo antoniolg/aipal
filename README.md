@@ -72,7 +72,7 @@ The bot will send the document back to Telegram.
 The only required environment variable is `TELEGRAM_BOT_TOKEN` in `.env`.
 
 Optional:
-- `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aibot/scripts`)
+- `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aipal/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
 - `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
 
