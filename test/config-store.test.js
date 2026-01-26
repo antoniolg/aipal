@@ -66,3 +66,29 @@ test('readSoul loads soul content', async () => {
   assert.equal(soul.content, 'hello soul');
   assert.equal(soul.path, SOUL_PATH);
 });
+
+test('loadThreads returns empty map when threads file is missing', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-config-'));
+  const { loadThreads } = loadConfigStore(dir);
+  const threads = await loadThreads();
+  assert.equal(threads.size, 0);
+});
+
+test('saveThreads writes and loadThreads reads threads', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-config-'));
+  const { loadThreads, saveThreads, THREADS_PATH } = loadConfigStore(dir);
+
+  const input = new Map([
+    [123, 'thread-123'],
+    ['-456', 'thread-456'],
+  ]);
+  await saveThreads(input);
+
+  const loaded = await loadThreads();
+  assert.equal(loaded.size, 2);
+  assert.equal(loaded.get('123'), 'thread-123');
+  assert.equal(loaded.get('-456'), 'thread-456');
+
+  const raw = await fs.readFile(THREADS_PATH, 'utf8');
+  assert.deepEqual(JSON.parse(raw), { 123: 'thread-123', '-456': 'thread-456' });
+});

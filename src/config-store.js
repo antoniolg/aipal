@@ -1,3 +1,4 @@
+const { randomUUID } = require('crypto');
 const path = require('path');
 const os = require('os');
 const fs = require('fs/promises');
@@ -7,6 +8,7 @@ const CONFIG_PATH = path.join(XDG_CONFIG_HOME, 'aipal', 'config.json');
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const MEMORY_PATH = path.join(CONFIG_DIR, 'memory.md');
 const SOUL_PATH = path.join(CONFIG_DIR, 'soul.md');
+const THREADS_PATH = path.join(CONFIG_DIR, 'threads.json');
 
 async function readConfig() {
   try {
@@ -22,7 +24,7 @@ async function readConfig() {
 
 async function writeConfig(config) {
   await fs.mkdir(CONFIG_DIR, { recursive: true });
-  const tmpPath = `${CONFIG_PATH}.tmp`;
+  const tmpPath = `${CONFIG_PATH}.${randomUUID()}.tmp`;
   await fs.writeFile(tmpPath, JSON.stringify(config, null, 2));
   await fs.rename(tmpPath, CONFIG_PATH);
 }
@@ -60,13 +62,37 @@ async function updateConfig(patch) {
   return next;
 }
 
+async function loadThreads() {
+  try {
+    const raw = await fs.readFile(THREADS_PATH, 'utf8');
+    if (!raw.trim()) return new Map();
+    const obj = JSON.parse(raw);
+    return new Map(Object.entries(obj));
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return new Map();
+    console.warn('Failed to load threads.json:', err);
+    return new Map();
+  }
+}
+
+async function saveThreads(threads) {
+  await fs.mkdir(CONFIG_DIR, { recursive: true });
+  const obj = Object.fromEntries(threads);
+  const tmpPath = `${THREADS_PATH}.${randomUUID()}.tmp`;
+  await fs.writeFile(tmpPath, JSON.stringify(obj, null, 2));
+  await fs.rename(tmpPath, THREADS_PATH);
+}
+
 module.exports = {
   CONFIG_DIR,
   CONFIG_PATH,
   MEMORY_PATH,
   SOUL_PATH,
+  THREADS_PATH,
+  loadThreads,
   readConfig,
   readMemory,
   readSoul,
+  saveThreads,
   updateConfig,
 };
