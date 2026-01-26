@@ -48,6 +48,10 @@ const {
   markdownToTelegramHtml,
   buildPrompt,
 } = require('./message-utils');
+const {
+  createAccessControlMiddleware,
+  parseAllowedUsersEnv,
+} = require('./access-control');
 
 function formatLogTimestamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -111,6 +115,28 @@ const AGENT_MAX_BUFFER = readNumberEnv(
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
+const allowedUsers = parseAllowedUsersEnv(process.env.ALLOWED_USERS);
+
+// Access control middleware: must be registered before any other handlers
+if (allowedUsers.size > 0) {
+  console.log(`Configured with ${allowedUsers.size} allowed users.`);
+  bot.use(
+    createAccessControlMiddleware(allowedUsers, {
+      onUnauthorized: ({ userId, username }) => {
+        console.warn(
+          `Unauthorized access attempt from user ID ${userId} (${
+            username || 'no username'
+          })`
+        );
+      },
+    })
+  );
+} else {
+  console.warn(
+    'WARNING: No ALLOWED_USERS configured. The bot is open to everyone.'
+  );
+}
+
 const queues = new Map();
 let threads = new Map();
 let threadsPersist = Promise.resolve();
