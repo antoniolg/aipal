@@ -6,103 +6,99 @@ const OPENCODE_OUTPUT_FORMAT = 'json';
 const DEFAULT_MODEL = 'opencode/gpt-5-nano';
 
 function safeJsonParse(value) {
-    try {
-        return JSON.parse(value);
-    } catch {
-        return null;
-    }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function buildCommand({ prompt, promptExpression, threadId, model }) {
-    const promptValue = resolvePromptValue(prompt, promptExpression);
-    const args = [
-        'run',
-        '--format',
-        OPENCODE_OUTPUT_FORMAT,
-    ];
+  const promptValue = resolvePromptValue(prompt, promptExpression);
+  const args = ['run', '--format', OPENCODE_OUTPUT_FORMAT];
 
-    const modelToUse = model || DEFAULT_MODEL;
-    args.push('--model', shellQuote(modelToUse));
+  const modelToUse = model || DEFAULT_MODEL;
+  args.push('--model', shellQuote(modelToUse));
 
-    if (threadId) {
-        args.push('--continue');
-        args.push('--session', shellQuote(threadId));
-    }
+  if (threadId) {
+    args.push('--continue');
+    args.push('--session', shellQuote(threadId));
+  }
 
-    // Prompt is last, as positional argument
-    args.push(promptValue);
+  // Prompt is last, as positional argument
+  args.push(promptValue);
 
-    const command = `${OPENCODE_CMD} ${args.join(' ')}`.trim();
+  const command = `${OPENCODE_CMD} ${args.join(' ')}`.trim();
 
-    // Prepend permission env and append input redirection
-    return `OPENCODE_PERMISSION=${shellQuote(OPENCODE_PERMISSION)} ${command} < /dev/null`;
+  // Prepend permission env and append input redirection
+  return `OPENCODE_PERMISSION=${shellQuote(OPENCODE_PERMISSION)} ${command} < /dev/null`;
 }
 
 function parseOutput(output) {
-    const lines = String(output || '').split(/\r?\n/);
-    let threadId;
-    let textParts = [];
-    let sawJson = false;
+  const lines = String(output || '').split(/\r?\n/);
+  let threadId;
+  const textParts = [];
+  let sawJson = false;
 
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
-        // Skip non-JSON lines (like INFO logs)
-        if (!trimmed.startsWith('{')) continue;
+    // Skip non-JSON lines (like INFO logs)
+    if (!trimmed.startsWith('{')) continue;
 
-        const payload = safeJsonParse(trimmed);
-        if (!payload || typeof payload !== 'object') continue;
+    const payload = safeJsonParse(trimmed);
+    if (!payload || typeof payload !== 'object') continue;
 
-        sawJson = true;
+    sawJson = true;
 
-        if (payload.sessionID) {
-            threadId = payload.sessionID;
-        }
-
-        if (payload.type === 'text' && payload.part && payload.part.text) {
-            textParts.push(payload.part.text);
-        }
-        // Handle simplified format if applicable or other event types if necessary
+    if (payload.sessionID) {
+      threadId = payload.sessionID;
     }
 
-    const text = textParts.join('').trim();
-
-    if (!sawJson) {
-        // Fallback to raw output if no JSON found
-        return { text: String(output || '').trim(), threadId: undefined, sawJson: false };
+    if (payload.type === 'text' && payload.part && payload.part.text) {
+      textParts.push(payload.part.text);
     }
+  }
 
-    return { text, threadId, sawJson: true };
+  const text = textParts.join('').trim();
+
+  if (!sawJson) {
+    return {
+      text: String(output || '').trim(),
+      threadId: undefined,
+      sawJson: false,
+    };
+  }
+
+  return { text, threadId, sawJson: true };
 }
 
 function listModelsCommand() {
-    // Prepend permission env
-    return `OPENCODE_PERMISSION=${shellQuote(OPENCODE_PERMISSION)} ${OPENCODE_CMD} models`;
+  // Prepend permission env and append input redirection
+  return `OPENCODE_PERMISSION=${shellQuote(OPENCODE_PERMISSION)} ${OPENCODE_CMD} models < /dev/null`;
 }
 
 function parseModelList(output) {
-    const lines = String(output || '').split(/\r?\n/);
-    const models = [];
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        // Filter logs or irrelevant info
-        if (trimmed.startsWith('INFO')) continue;
-        // Assuming simple list
-        models.push(trimmed);
-    }
-    return models.join('\n');
+  const lines = String(output || '').split(/\r?\n/);
+  const models = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('INFO')) continue;
+    models.push(trimmed);
+  }
+  return models.join('\n');
 }
 
 module.exports = {
-    id: 'opencode',
-    label: 'opencode',
-    needsPty: false,
-    mergeStderr: false,
-    buildCommand,
-    parseOutput,
-    listModelsCommand,
-    parseModelList,
-    defaultModel: DEFAULT_MODEL,
+  id: 'opencode',
+  label: 'opencode',
+  needsPty: false,
+  mergeStderr: false,
+  buildCommand,
+  parseOutput,
+  listModelsCommand,
+  parseModelList,
+  defaultModel: DEFAULT_MODEL,
 };
