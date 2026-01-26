@@ -53,6 +53,8 @@ const {
   parseAllowedUsersEnv,
 } = require('./access-control');
 
+const { ScriptManager } = require('./script-manager');
+
 function formatLogTimestamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
   const year = date.getFullYear();
@@ -114,8 +116,6 @@ const AGENT_MAX_BUFFER = readNumberEnv(
 );
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
-const { ScriptManager } = require('./script-manager');
-
 const bot = new Telegraf(BOT_TOKEN);
 const allowedUsers = parseAllowedUsersEnv(process.env.ALLOWED_USERS);
 
@@ -152,11 +152,12 @@ const scriptManager = new ScriptManager(SCRIPTS_DIR);
 bot.command('help', async (ctx) => {
   const builtIn = [
     '/start - Hello world',
-    '/agent &lt;name&gt; - Switch agent (codex, claude, gemini)',
-    '/thinking &lt;level&gt; - Set reasoning effort',
+    '/agent <name> - Switch agent (codex, claude, gemini)',
+    '/thinking <level> - Set reasoning effort',
     '/reset - Reset session',
+    '/cron [list|reload|chatid] - Manage cron jobs',
     '/help - Show this help',
-    '/document_scripts - Auto-document available scripts',
+    '/document_scripts confirm - Auto-document available scripts (requires ALLOWED_USERS)',
   ];
 
   let scripts = [];
@@ -169,74 +170,99 @@ bot.command('help', async (ctx) => {
 
   const scriptLines = scripts.map((s) => {
     const desc = s.description ? ` - ${s.description}` : '';
-    return `• /${s.name}${desc}`;
+    return `- /${s.name}${desc}`;
   });
 
-  const message = [
-    '<b>Built-in commands:</b>',
-    ...builtIn,
+  const messageMd = [
+    '**Built-in commands:**',
+    ...builtIn.map((line) => `- ${line}`),
     '',
-    '<b>Scripts:</b>',
+    '**Scripts:**',
     ...(scriptLines.length ? scriptLines : ['(none)']),
   ].join('\n');
 
-  ctx.reply(message, { parse_mode: 'HTML' });
+  const message = markdownToTelegramHtml(messageMd);
+  ctx.reply(message, { parse_mode: 'HTML', disable_web_page_preview: true });
 });
 
 bot.command('document_scripts', async (ctx) => {
   const chatId = ctx.chat.id;
+  if (allowedUsers.size === 0) {
+    await ctx.reply('ALLOWED_USERS is not configured. /document_scripts is disabled.');
+    return;
+  }
+
+  const value = extractCommandValue(ctx.message.text);
+  const confirmed = value === 'confirm' || value === '--yes';
+  if (!confirmed) {
+    await ctx.reply(
+      [
+        'This will send the first 2000 chars of each script to the active agent',
+        'to generate a short description and write it to `scripts.json`.',
+        '',
+        'Run `/document_scripts confirm` to proceed.',
+      ].join('\n'),
+    );
+    return;
+  }
+
   await ctx.reply('Scanning for undocumented scripts...');
 
-  let scripts = [];
-  try {
-    scripts = await scriptManager.listScripts();
-  } catch (err) {
-    return replyWithError(ctx, 'Failed to list scripts', err);
-  }
-
-  const undocumented = scripts.filter(s => !s.description);
-
-  if (undocumented.length === 0) {
-    return ctx.reply('All scripts are already documented!');
-  }
-
-  await ctx.reply(`Found ${undocumented.length} undocumented scripts. processing...`);
-
-  // Process sequentially to be nice to the agent
-  for (const script of undocumented) {
+  enqueue(chatId, async () => {
+    let scripts = [];
     try {
-      const content = await scriptManager.getScriptContent(script.name);
-      const prompt = `Please analyze the following script and provide a very short (max 10 words) description of what it does. Return ONLY the description, no quotes, no extra text.\n\nScript:\n${content.slice(0, 2000)}`; // limit content size
-
-      // Re-use runAgentForChat but we need to bypass the thread/history or use a temp one?
-      // Actually, we can use the current chat's agent/thread but it might be confusing context.
-      // Let's force a one-off interaction if possible, or just use the current agent.
-      // We'll use runAgentForChat but explicit prompt.
-
-      // To avoid polluting the user's conversation history too much or confusing the agent, 
-      // maybe strictly framed prompt is enough.
-
-      /* 
-         We can't easily bypass the thread logic in runAgentForChat without refactoring.
-         But we can just use the tool directly if we imported agents.
-         Actually, runAgentForChat handles pty/etc.
-         Let's try to use runAgentForChat and then we might want to suppress the reply to user?
-         Wait, runAgentForChat returns the text. We can use it.
-      */
-
-      const description = await runAgentForChat(chatId, prompt);
-      const cleaned = description.trim().replace(/^['"]|['"]$/g, '');
-
-      await scriptManager.updateScriptMetadata(script.name, { description: cleaned });
-      await ctx.reply(`Documented ${script.name}: ${cleaned}`);
-
+      scripts = await scriptManager.listScripts();
     } catch (err) {
-      console.error(`Failed to document ${script.name}`, err);
-      await ctx.reply(`Failed to document ${script.name}: ${err.message}`);
+      await replyWithError(ctx, 'Failed to list scripts', err);
+      return;
     }
-  }
 
-  await ctx.reply('Documentation complete. Use /help to see the results.');
+    const undocumented = scripts.filter((script) => !script.description);
+    if (undocumented.length === 0) {
+      await ctx.reply('All scripts are already documented!');
+      return;
+    }
+
+    await ctx.reply(`Found ${undocumented.length} undocumented scripts. Processing...`);
+
+    const stopTyping = startTyping(ctx);
+    try {
+      for (const script of undocumented) {
+        try {
+          const content = await scriptManager.getScriptContent(script.name);
+          const prompt = [
+            'Analyze the following script and provide a very short description (max 10 words).',
+            'Return ONLY the description (no quotes, no extra text).',
+            '',
+            'Script:',
+            content.slice(0, 2000),
+          ].join('\n');
+
+          const description = await runAgentOneShot(prompt);
+          const cleaned = String(description || '')
+            .split(/\r?\n/)[0]
+            .trim()
+            .replace(/^['"]|['"]$/g, '')
+            .slice(0, 140);
+
+          if (!cleaned) {
+            await ctx.reply(`Skipped ${script.name}: empty description`);
+            continue;
+          }
+
+          await scriptManager.updateScriptMetadata(script.name, { description: cleaned });
+          await ctx.reply(`Documented ${script.name}: ${cleaned}`);
+        } catch (err) {
+          console.error(`Failed to document ${script.name}`, err);
+          await ctx.reply(`Failed to document ${script.name}: ${err.message}`);
+        }
+      }
+    } finally {
+      stopTyping();
+    }
+
+    await ctx.reply('Documentation complete. Use /help to see the results.');
+  });
 });
 
 bot.catch((err) => {
@@ -515,6 +541,50 @@ function startDocumentCleanup() {
       timer.unref();
     }
   }
+}
+
+async function runAgentOneShot(prompt) {
+  const agent = getAgent(globalAgent);
+  const thinking = globalThinking;
+  const promptText = String(prompt || '');
+  const promptBase64 = Buffer.from(promptText, 'utf8').toString('base64');
+  const promptExpression = '"$PROMPT"';
+  const agentCmd = agent.buildCommand({
+    prompt: promptText,
+    promptExpression,
+    threadId: undefined,
+    thinking,
+  });
+
+  const command = [
+    `PROMPT_B64=${shellQuote(promptBase64)};`,
+    'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
+    `${agentCmd}`,
+  ].join(' ');
+
+  let commandToRun = command;
+  if (agent.needsPty) {
+    commandToRun = wrapCommandWithPty(commandToRun);
+  }
+  if (agent.mergeStderr) {
+    commandToRun = `${commandToRun} 2>&1`;
+  }
+
+  const startedAt = Date.now();
+  console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
+  let output;
+  try {
+    output = await execLocal('bash', ['-lc', commandToRun], {
+      timeout: AGENT_TIMEOUT_MS,
+      maxBuffer: AGENT_MAX_BUFFER,
+    });
+  } finally {
+    const elapsedMs = Date.now() - startedAt;
+    console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
+  }
+
+  const parsed = agent.parseOutput(output);
+  return parsed.text || output;
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
