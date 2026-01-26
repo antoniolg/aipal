@@ -45,6 +45,8 @@ Open Telegram, send `/start`, then any message.
 - `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
 - `/agent <codex|claude|gemini>`: set the CLI agent (persisted in `config.json`)
 - `/cron [list|reload|chatid]`: manage cron jobs (see below)
+- `/help`: list available commands and scripts
+- `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)
 - `/<script> [args]`: run an executable script from `~/.config/aipal/scripts`
 
 ### Cron jobs
