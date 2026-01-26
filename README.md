@@ -74,6 +74,7 @@ The only required environment variable is `TELEGRAM_BOT_TOKEN` in `.env`.
 Optional:
 - `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aibot/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
+- `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
 
 ## Config file (optional)
 The bot stores `/agent` in a JSON file at:
@@ -96,7 +97,9 @@ Location:
 `~/.config/aipal/soul.md` and `~/.config/aipal/memory.md` (or under `$XDG_CONFIG_HOME/aipal/`).
 
 ## Security notes
-This bot executes local commands on your machine. Run it only on trusted hardware, keep the bot private, and avoid sharing the token. There is no built-in allowlist: anyone who can message the bot can execute the configured command.
+This bot executes local commands on your machine. Run it only on trusted hardware, keep the bot private, and avoid sharing the token.
+
+To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of Telegram user IDs. Unauthorized users are ignored (no reply).
 
 ## How it works
 - Builds a shell command with a base64-encoded prompt to avoid quoting issues

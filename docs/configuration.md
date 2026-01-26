@@ -20,6 +20,9 @@ This bot stores a minimal JSON config with the values set by `/agent`.
 
 If the file is missing, all values are unset and the bot uses defaults.
 
+## Environment variables
+- `ALLOWED_USERS` (optional): comma-separated list of Telegram user IDs allowed to use the bot. If unset/empty, the bot is open to everyone.
+
 ## Memory file (optional)
 If `memory.md` exists alongside `config.json`, its contents are injected into the very first prompt of a new conversation (i.e. when there is no active session/thread).
 
