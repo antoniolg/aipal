@@ -340,6 +340,7 @@ function execLocal(cmd, args, options = {}) {
           const timeoutErr = new Error(`Command timed out after ${timeout}ms`);
           timeoutErr.code = 'ETIMEDOUT';
           timeoutErr.stderr = stderr;
+          timeoutErr.stdout = stdout;
           return reject(timeoutErr);
         }
         return reject(err);
@@ -577,17 +578,33 @@ async function runAgentOneShot(prompt) {
   const startedAt = Date.now();
   console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
   let output;
+  let execError;
   try {
     output = await execLocal('bash', ['-lc', commandToRun], {
       timeout: AGENT_TIMEOUT_MS,
       maxBuffer: AGENT_MAX_BUFFER,
     });
+  } catch (err) {
+    execError = err;
+    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
+      output = err.stdout;
+    } else {
+      throw err;
+    }
   } finally {
     const elapsedMs = Date.now() - startedAt;
     console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
   }
 
   const parsed = agent.parseOutput(output);
+  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+    throw execError;
+  }
+  if (execError) {
+    console.warn(
+      `Agent one-shot exited non-zero; returning stdout (code=${execError.code || 'unknown'})`
+    );
+  }
   return parsed.text || output;
 }
 
@@ -636,13 +653,15 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   const startedAt = Date.now();
   console.info(`Agent start chat=${chatId} thread=${threadId || 'new'}`);
   let output;
+  let execError;
   try {
     output = await execLocal('bash', ['-lc', commandToRun], {
       timeout: AGENT_TIMEOUT_MS,
       maxBuffer: AGENT_MAX_BUFFER,
     });
   } catch (err) {
-    if (err.stdout) {
+    execError = err;
+    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
       output = err.stdout;
     } else {
       throw err;
@@ -652,6 +671,14 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     console.info(`Agent finished chat=${chatId} durationMs=${elapsedMs}`);
   }
   const parsed = agent.parseOutput(output);
+  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+    throw execError;
+  }
+  if (execError) {
+    console.warn(
+      `Agent exited non-zero; returning stdout chat=${chatId} code=${execError.code || 'unknown'}`
+    );
+  }
   if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
     try {
       const listCommand = agent.listSessionsCommand();
@@ -909,7 +936,20 @@ bot.on('text', (ctx) => {
   const slash = parseSlashCommand(text);
   if (slash) {
     const normalized = slash.name.toLowerCase();
-    if (['start', 'thinking', 'agent', 'reset'].includes(normalized)) return;
+    if (
+      [
+        'start',
+        'thinking',
+        'agent',
+        'model',
+        'reset',
+        'cron',
+        'help',
+        'document_scripts',
+      ].includes(normalized)
+    ) {
+      return;
+    }
     enqueue(chatId, async () => {
       const stopTyping = startTyping(ctx);
       try {
