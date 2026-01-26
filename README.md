@@ -15,7 +15,7 @@ Minimal Telegram bot that forwards messages to a local CLI agent (Codex by defau
 
 ## Requirements
 - Node.js 18+
-- Agent CLI on PATH (default: `codex`, or `claude` / `gemini` when configured)
+- Agent CLI on PATH (default: `codex`, or `claude` / `gemini` / `opencode` when configured)
 - Audio (optional): `parakeet-mlx` + `ffmpeg`
 
 ## Quick start
@@ -43,7 +43,8 @@ Open Telegram, send `/start`, then any message.
 - Documents: send a file (caption becomes the prompt)
 - `/reset`: clear the chat session (drops the stored session id)
 - `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
-- `/agent <codex|claude|gemini>`: set the CLI agent (persisted in `config.json`)
+- `/agent <codex|claude|gemini|opencode>`: set the CLI agent (persisted in `config.json`)
+- `/model [model_id]`: view/set the model for the current agent (persisted in `config.json`)
 - `/cron [list|reload|chatid]`: manage cron jobs (see below)
 - `/help`: list available commands and scripts
 - `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)

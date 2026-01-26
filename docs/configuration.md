@@ -10,12 +10,16 @@ This bot stores a minimal JSON config with the values set by `/agent`.
 ```json
 {
   "agent": "codex",
+  "models": {
+    "codex": "gpt-5"
+  },
   "cronChatId": 123456789
 }
 ```
 
 ## Fields
-- `agent`: which CLI to run (`codex`, `claude`, or `gemini`).
+- `agent`: which CLI to run (`codex`, `claude`, `gemini`, or `opencode`).
+- `models` (optional): a map of agent id → model id, set via `/model`.
 - `cronChatId` (optional): Telegram chat id used for cron job messages. You can get it from `/cron chatid`.
 
 If the file is missing, all values are unset and the bot uses defaults.
