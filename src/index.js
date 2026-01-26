@@ -18,11 +18,19 @@ const {
   CONFIG_PATH,
   MEMORY_PATH,
   SOUL_PATH,
+  loadThreads,
   readConfig,
   readMemory,
   readSoul,
+  saveThreads,
   updateConfig,
 } = require('./config-store');
+const {
+  CRON_PATH,
+  loadCronJobs,
+  saveCronJobs,
+  startCronScheduler,
+} = require('./cron-scheduler');
 const {
   chunkText,
   formatError,
@@ -40,6 +48,12 @@ const {
   markdownToTelegramHtml,
   buildPrompt,
 } = require('./message-utils');
+const {
+  createAccessControlMiddleware,
+  parseAllowedUsersEnv,
+} = require('./access-control');
+
+const { ScriptManager } = require('./script-manager');
 
 function formatLogTimestamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -103,13 +117,155 @@ const AGENT_MAX_BUFFER = readNumberEnv(
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
+const allowedUsers = parseAllowedUsersEnv(process.env.ALLOWED_USERS);
+
+// Access control middleware: must be registered before any other handlers
+if (allowedUsers.size > 0) {
+  console.log(`Configured with ${allowedUsers.size} allowed users.`);
+  bot.use(
+    createAccessControlMiddleware(allowedUsers, {
+      onUnauthorized: ({ userId, username }) => {
+        console.warn(
+          `Unauthorized access attempt from user ID ${userId} (${
+            username || 'no username'
+          })`
+        );
+      },
+    })
+  );
+} else {
+  console.warn(
+    'WARNING: No ALLOWED_USERS configured. The bot is open to everyone.'
+  );
+}
+
 const queues = new Map();
-const threads = new Map();
+let threads = new Map();
+let threadsPersist = Promise.resolve();
 const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
 let globalModels = {};
+
+const scriptManager = new ScriptManager(SCRIPTS_DIR);
+
+bot.command('help', async (ctx) => {
+  const builtIn = [
+    '/start - Hello world',
+    '/agent <name> - Switch agent (codex, claude, gemini, opencode)',
+    '/thinking <level> - Set reasoning effort',
+    '/model [model_id] - View/set model for current agent',
+    '/reset - Reset session',
+    '/cron [list|reload|chatid] - Manage cron jobs',
+    '/help - Show this help',
+    '/document_scripts confirm - Auto-document available scripts (requires ALLOWED_USERS)',
+  ];
+
+  let scripts = [];
+  try {
+    scripts = await scriptManager.listScripts();
+  } catch (err) {
+    console.error('Failed to list scripts', err);
+    scripts = [];
+  }
+
+  const scriptLines = scripts.map((s) => {
+    const desc = s.description ? ` - ${s.description}` : '';
+    return `- /${s.name}${desc}`;
+  });
+
+  const messageMd = [
+    '**Built-in commands:**',
+    ...builtIn.map((line) => `- ${line}`),
+    '',
+    '**Scripts:**',
+    ...(scriptLines.length ? scriptLines : ['(none)']),
+  ].join('\n');
+
+  const message = markdownToTelegramHtml(messageMd);
+  ctx.reply(message, { parse_mode: 'HTML', disable_web_page_preview: true });
+});
+
+bot.command('document_scripts', async (ctx) => {
+  const chatId = ctx.chat.id;
+  if (allowedUsers.size === 0) {
+    await ctx.reply('ALLOWED_USERS is not configured. /document_scripts is disabled.');
+    return;
+  }
+
+  const value = extractCommandValue(ctx.message.text);
+  const confirmed = value === 'confirm' || value === '--yes';
+  if (!confirmed) {
+    await ctx.reply(
+      [
+        'This will send the first 2000 chars of each script to the active agent',
+        'to generate a short description and write it to `scripts.json`.',
+        '',
+        'Run `/document_scripts confirm` to proceed.',
+      ].join('\n'),
+    );
+    return;
+  }
+
+  await ctx.reply('Scanning for undocumented scripts...');
+
+  enqueue(chatId, async () => {
+    let scripts = [];
+    try {
+      scripts = await scriptManager.listScripts();
+    } catch (err) {
+      await replyWithError(ctx, 'Failed to list scripts', err);
+      return;
+    }
+
+    const undocumented = scripts.filter((script) => !script.description);
+    if (undocumented.length === 0) {
+      await ctx.reply('All scripts are already documented!');
+      return;
+    }
+
+    await ctx.reply(`Found ${undocumented.length} undocumented scripts. Processing...`);
+
+    const stopTyping = startTyping(ctx);
+    try {
+      for (const script of undocumented) {
+        try {
+          const content = await scriptManager.getScriptContent(script.name);
+          const prompt = [
+            'Analyze the following script and provide a very short description (max 10 words).',
+            'Return ONLY the description (no quotes, no extra text).',
+            '',
+            'Script:',
+            content.slice(0, 2000),
+          ].join('\n');
+
+          const description = await runAgentOneShot(prompt);
+          const cleaned = String(description || '')
+            .split(/\r?\n/)[0]
+            .trim()
+            .replace(/^['"]|['"]$/g, '')
+            .slice(0, 140);
+
+          if (!cleaned) {
+            await ctx.reply(`Skipped ${script.name}: empty description`);
+            continue;
+          }
+
+          await scriptManager.updateScriptMetadata(script.name, { description: cleaned });
+          await ctx.reply(`Documented ${script.name}: ${cleaned}`);
+        } catch (err) {
+          console.error(`Failed to document ${script.name}`, err);
+          await ctx.reply(`Failed to document ${script.name}: ${err.message}`);
+        }
+      }
+    } finally {
+      stopTyping();
+    }
+
+    await ctx.reply('Documentation complete. Use /help to see the results.');
+  });
+});
 
 bot.catch((err) => {
   console.error('Bot error', err);
@@ -119,6 +275,17 @@ function readNumberEnv(raw, fallback) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return value;
+}
+
+function getThreadKey(chatId) {
+  return String(chatId);
+}
+
+function persistThreads() {
+  threadsPersist = threadsPersist
+    .catch(() => {})
+    .then(() => saveThreads(threads));
+  return threadsPersist;
 }
 
 async function buildBootstrapContext() {
@@ -143,10 +310,13 @@ async function buildBootstrapContext() {
   return lines.join('\n');
 }
 
+let cronScheduler = null;
+
 async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.agent) globalAgent = normalizeAgent(config.agent);
   if (config.models) globalModels = { ...config.models };
+  return config;
 }
 
 function shellQuote(value) {
@@ -377,8 +547,53 @@ function startDocumentCleanup() {
   }
 }
 
+async function runAgentOneShot(prompt) {
+  const agent = getAgent(globalAgent);
+  const thinking = globalThinking;
+  const promptText = String(prompt || '');
+  const promptBase64 = Buffer.from(promptText, 'utf8').toString('base64');
+  const promptExpression = '"$PROMPT"';
+  const agentCmd = agent.buildCommand({
+    prompt: promptText,
+    promptExpression,
+    threadId: undefined,
+    thinking,
+  });
+
+  const command = [
+    `PROMPT_B64=${shellQuote(promptBase64)};`,
+    'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
+    `${agentCmd}`,
+  ].join(' ');
+
+  let commandToRun = command;
+  if (agent.needsPty) {
+    commandToRun = wrapCommandWithPty(commandToRun);
+  }
+  if (agent.mergeStderr) {
+    commandToRun = `${commandToRun} 2>&1`;
+  }
+
+  const startedAt = Date.now();
+  console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
+  let output;
+  try {
+    output = await execLocal('bash', ['-lc', commandToRun], {
+      timeout: AGENT_TIMEOUT_MS,
+      maxBuffer: AGENT_MAX_BUFFER,
+    });
+  } finally {
+    const elapsedMs = Date.now() - startedAt;
+    console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
+  }
+
+  const parsed = agent.parseOutput(output);
+  return parsed.text || output;
+}
+
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const threadId = threads.get(chatId);
+  const threadKey = getThreadKey(chatId);
+  const threadId = threads.get(threadKey);
   const agent = getAgent(globalAgent);
   let promptWithContext = prompt;
   if (!threadId) {
@@ -462,7 +677,8 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     }
   }
   if (parsed.threadId) {
-    threads.set(chatId, parsed.threadId);
+    threads.set(threadKey, parsed.threadId);
+    persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
   }
   if (parsed.sawJson) {
     return parsed.text || output;
@@ -580,6 +796,7 @@ bot.command('agent', async (ctx) => {
     await updateConfig({ agent: normalized });
     if (changed) {
       threads.clear();
+      await persistThreads();
     }
     ctx.reply(`Agent set to ${getAgentLabel(globalAgent)}.`);
   } catch (err) {
@@ -589,7 +806,8 @@ bot.command('agent', async (ctx) => {
 });
 
 bot.command('reset', async (ctx) => {
-  threads.delete(ctx.chat.id);
+  threads.delete(getThreadKey(ctx.chat.id));
+  persistThreads().catch((err) => console.warn('Failed to persist threads after reset:', err));
   ctx.reply('Session reset.');
 });
 
@@ -640,6 +858,47 @@ bot.command('model', async (ctx) => {
     console.error(err);
     await replyWithError(ctx, 'Failed to persist model setting.', err);
   }
+});
+
+bot.command('cron', async (ctx) => {
+  const value = extractCommandValue(ctx.message.text);
+  const parts = value ? value.split(/\s+/) : [];
+  const subcommand = parts[0]?.toLowerCase();
+
+  if (!subcommand || subcommand === 'list') {
+    try {
+      const jobs = await loadCronJobs();
+      if (jobs.length === 0) {
+        await ctx.reply('No cron jobs configured.');
+        return;
+      }
+      const lines = jobs.map((j) => {
+        const status = j.enabled ? '✅' : '❌';
+        return `${status} ${j.id}: ${j.cron} → "${j.prompt}"`;
+      });
+      await ctx.reply(`Cron jobs:\n${lines.join('\n')}`);
+    } catch (err) {
+      await replyWithError(ctx, 'Failed to list cron jobs.', err);
+    }
+    return;
+  }
+
+  if (subcommand === 'reload') {
+    if (cronScheduler) {
+      const count = await cronScheduler.reload();
+      await ctx.reply(`Cron jobs reloaded. ${count} job(s) scheduled.`);
+    } else {
+      await ctx.reply('Cron scheduler not running. Set cronChatId in config.json first.');
+    }
+    return;
+  }
+
+  if (subcommand === 'chatid') {
+    await ctx.reply(`Your chat ID: ${ctx.chat.id}`);
+    return;
+  }
+
+  await ctx.reply('Usage: /cron [list|reload|chatid]');
 });
 
 bot.on('text', (ctx) => {
@@ -783,9 +1042,82 @@ bot.on('document', (ctx) => {
   });
 });
 
+async function sendResponseToChat(chatId, response) {
+  const { cleanedText: afterImages, imagePaths } = extractImageTokens(
+    response || '',
+    IMAGE_DIR
+  );
+  const { cleanedText, documentPaths } = extractDocumentTokens(
+    afterImages,
+    DOCUMENT_DIR
+  );
+  const text = cleanedText.trim();
+  if (text) {
+    for (const chunk of chunkMarkdown(text, 3000)) {
+      const formatted = markdownToTelegramHtml(chunk) || chunk;
+      await bot.telegram.sendMessage(chatId, formatted, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+    }
+  }
+  const uniqueImages = Array.from(new Set(imagePaths));
+  for (const imagePath of uniqueImages) {
+    try {
+      if (!isPathInside(IMAGE_DIR, imagePath)) continue;
+      await fs.access(imagePath);
+      await bot.telegram.sendPhoto(chatId, { source: imagePath });
+    } catch (err) {
+      console.warn('Failed to send image:', imagePath, err);
+    }
+  }
+  const uniqueDocuments = Array.from(new Set(documentPaths));
+  for (const documentPath of uniqueDocuments) {
+    try {
+      if (!isPathInside(DOCUMENT_DIR, documentPath)) continue;
+      await fs.access(documentPath);
+      await bot.telegram.sendDocument(chatId, { source: documentPath });
+    } catch (err) {
+      console.warn('Failed to send document:', documentPath, err);
+    }
+  }
+}
+
+async function handleCronTrigger(chatId, prompt, options = {}) {
+  const { jobId } = options;
+  console.info(`Cron job ${jobId} executing for chat ${chatId}`);
+  try {
+    await bot.telegram.sendChatAction(chatId, 'typing');
+    const response = await runAgentForChat(chatId, prompt);
+    await sendResponseToChat(chatId, response);
+  } catch (err) {
+    console.error(`Cron job ${jobId} failed:`, err);
+    try {
+      await bot.telegram.sendMessage(chatId, `Cron job "${jobId}" failed: ${err.message}`);
+    } catch {}
+  }
+}
+
 startImageCleanup();
 startDocumentCleanup();
-hydrateGlobalSettings().catch((err) => console.warn('Failed to load config settings:', err));
+loadThreads()
+  .then((loaded) => {
+    threads = loaded;
+    console.info(`Loaded ${threads.size} thread(s) from disk`);
+  })
+  .catch((err) => console.warn('Failed to load threads:', err));
+hydrateGlobalSettings()
+  .then((config) => {
+    if (config.cronChatId) {
+      cronScheduler = startCronScheduler({
+        chatId: config.cronChatId,
+        onTrigger: handleCronTrigger,
+      });
+    } else {
+      console.info('Cron scheduler disabled (no cronChatId in config)');
+    }
+  })
+  .catch((err) => console.warn('Failed to load config settings:', err));
 bot.launch();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
