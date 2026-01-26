@@ -48,6 +48,10 @@ const {
   markdownToTelegramHtml,
   buildPrompt,
 } = require('./message-utils');
+const {
+  createAccessControlMiddleware,
+  parseAllowedUsersEnv,
+} = require('./access-control');
 
 function formatLogTimestamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -111,27 +115,22 @@ const AGENT_MAX_BUFFER = readNumberEnv(
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
-const ALLOWED_USERS = (process.env.ALLOWED_USERS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .map((s) => String(s)); // Normalize to strings
+const allowedUsers = parseAllowedUsersEnv(process.env.ALLOWED_USERS);
 
 // Access control middleware: must be registered before any other handlers
-if (ALLOWED_USERS.length > 0) {
-  console.log(`Configured with ${ALLOWED_USERS.length} allowed users.`);
-  bot.use((ctx, next) => {
-    const userId = String(ctx.from?.id);
-    if (!userId || !ALLOWED_USERS.includes(userId)) {
-      console.warn(
-        `Unauthorized access attempt from user ID ${userId} (${
-          ctx.from?.username || 'no username'
-        })`
-      );
-      return; // Drop the update, do not reply to avoid leaking bot existence/spam
-    }
-    return next();
-  });
+if (allowedUsers.size > 0) {
+  console.log(`Configured with ${allowedUsers.size} allowed users.`);
+  bot.use(
+    createAccessControlMiddleware(allowedUsers, {
+      onUnauthorized: ({ userId, username }) => {
+        console.warn(
+          `Unauthorized access attempt from user ID ${userId} (${
+            username || 'no username'
+          })`
+        );
+      },
+    })
+  );
 } else {
   console.warn(
     'WARNING: No ALLOWED_USERS configured. The bot is open to everyone.'
