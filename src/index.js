@@ -26,9 +26,7 @@ const {
   updateConfig,
 } = require('./config-store');
 const {
-  CRON_PATH,
   loadCronJobs,
-  saveCronJobs,
   startCronScheduler,
 } = require('./cron-scheduler');
 const {

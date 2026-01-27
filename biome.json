@@ -1,0 +1,18 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.3.13/schema.json",
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "useNodejsImportProtocol": "off"
+      },
+      "suspicious": {
+        "noControlCharactersInRegex": "off"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": false
+  }
+}

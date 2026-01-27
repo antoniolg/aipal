@@ -62,13 +62,13 @@ function markdownToTelegramHtml(value) {
   const inlineCodes = [];
   const links = [];
 
-  text = text.replace(/```[^\n]*\n([\s\S]*?)```/g, (match, code) => {
+  text = text.replace(/```[^\n]*\n([\s\S]*?)```/g, (_match, code) => {
     const token = `@@CODEBLOCK${codeBlocks.length}@@`;
     codeBlocks.push(code);
     return token;
   });
 
-  text = text.replace(/`([^`\n]+)`/g, (match, code) => {
+  text = text.replace(/`([^`\n]+)`/g, (_match, code) => {
     const token = `@@INLINECODE${inlineCodes.length}@@`;
     inlineCodes.push(code);
     return token;
@@ -92,7 +92,7 @@ function markdownToTelegramHtml(value) {
   text = text.replace(/~~([^~]+)~~/g, '<s>$1</s>');
   text = text.replace(/^\s*[-*]\s+/gm, '• ');
 
-  text = text.replace(/@@LINK(\d+)@@/g, (match, index) => {
+  text = text.replace(/@@LINK(\d+)@@/g, (_match, index) => {
     const entry = links[Number(index)];
     if (!entry) return '';
     const label = escapeHtml(entry.label);
@@ -100,12 +100,12 @@ function markdownToTelegramHtml(value) {
     return `<a href="${href}">${label}</a>`;
   });
 
-  text = text.replace(/@@INLINECODE(\d+)@@/g, (match, index) => {
+  text = text.replace(/@@INLINECODE(\d+)@@/g, (_match, index) => {
     const code = inlineCodes[Number(index)] || '';
     return `<code>${escapeHtml(code)}</code>`;
   });
 
-  text = text.replace(/@@CODEBLOCK(\d+)@@/g, (match, index) => {
+  text = text.replace(/@@CODEBLOCK(\d+)@@/g, (_match, index) => {
     const code = codeBlocks[Number(index)] || '';
     return `<pre><code>${escapeHtml(code)}</code></pre>`;
   });
@@ -244,8 +244,8 @@ function isPathInside(baseDir, candidatePath) {
 function extractImageTokens(text, imageDir) {
   const imagePaths = [];
   const tokenRegex = /\[\[image:([^\]]+)\]\]/g;
-  let match;
-  while ((match = tokenRegex.exec(text)) !== null) {
+  let match = tokenRegex.exec(text);
+  while (match !== null) {
     const raw = (match[1] || '').trim();
     if (!raw) continue;
     const normalized = raw.replace(/^file:\/\//, '');
@@ -255,6 +255,7 @@ function extractImageTokens(text, imageDir) {
     } else {
       console.warn('Ignoring image path outside IMAGE_DIR:', resolved);
     }
+    match = tokenRegex.exec(text);
   }
   const cleanedText = text.replace(tokenRegex, '').trim();
   return { cleanedText, imagePaths };
@@ -263,8 +264,8 @@ function extractImageTokens(text, imageDir) {
 function extractDocumentTokens(text, documentDir) {
   const documentPaths = [];
   const tokenRegex = /\[\[(document|file):([^\]]+)\]\]/g;
-  let match;
-  while ((match = tokenRegex.exec(text)) !== null) {
+  let match = tokenRegex.exec(text);
+  while (match !== null) {
     const raw = (match[2] || '').trim();
     if (!raw) continue;
     const normalized = raw.replace(/^file:\/\//, '');
@@ -276,6 +277,7 @@ function extractDocumentTokens(text, documentDir) {
     } else {
       console.warn('Ignoring document path outside DOCUMENT_DIR:', resolved);
     }
+    match = tokenRegex.exec(text);
   }
   const cleanedText = text.replace(tokenRegex, '').trim();
   return { cleanedText, documentPaths };

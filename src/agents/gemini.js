@@ -28,7 +28,7 @@ function parseOutput(output) {
   if (!payload || typeof payload !== 'object') {
     return { text: trimmed, threadId: undefined, sawJson: false };
   }
-  if (payload.error && payload.error.message) {
+  if (payload.error?.message) {
     return { text: String(payload.error.message), threadId: undefined, sawJson: true };
   }
   const response = typeof payload.response === 'string' ? payload.response.trim() : '';

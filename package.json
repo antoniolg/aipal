@@ -8,7 +8,7 @@
   "scripts": {
     "build": "node --check src/index.js",
     "dev": "node --watch src/index.js",
-    "lint": "git ls-files -z -- '*.js' | xargs -0 node --check",
+    "lint": "biome lint .",
     "start": "node src/index.js",
     "test": "node --test"
   },
@@ -16,5 +16,8 @@
     "dotenv": "^16.4.5",
     "node-cron": "^4.2.1",
     "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.13"
   }
 }
