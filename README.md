@@ -9,7 +9,7 @@ Minimal Telegram bot that forwards messages to a local CLI agent (Codex by defau
 ## What it does
 - Runs your configured CLI agent for every message
 - Queues requests per chat to avoid overlapping runs
-- Keeps agent session state when JSON output is detected
+- Keeps agent session state per agent when JSON output is detected
 - Handles text, audio (via Parakeet), images, and documents
 - Supports `/thinking`, `/agent`, and `/cron` for runtime tweaks
 
@@ -41,7 +41,7 @@ Open Telegram, send `/start`, then any message.
 - Audio: send a voice note or audio file (transcribed with Parakeet)
 - Images: send a photo or image file (caption becomes the prompt)
 - Documents: send a file (caption becomes the prompt)
-- `/reset`: clear the chat session (drops the stored session id)
+- `/reset`: clear the current agent session (drops the stored session id for this agent)
 - `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
 - `/agent <codex|claude|gemini|opencode>`: set the CLI agent (persisted in `config.json`)
 - `/model [model_id]`: view/set the model for the current agent (persisted in `config.json`)

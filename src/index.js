@@ -26,6 +26,11 @@ const {
   updateConfig,
 } = require('./config-store');
 const {
+  buildThreadKey,
+  clearThreadForAgent,
+  resolveThreadId,
+} = require('./thread-store');
+const {
   loadCronJobs,
   startCronScheduler,
 } = require('./cron-scheduler');
@@ -155,7 +160,7 @@ bot.command('help', async (ctx) => {
     '/agent <name> - Switch agent (codex, claude, gemini, opencode)',
     '/thinking <level> - Set reasoning effort',
     '/model [model_id] - View/set model for current agent',
-    '/reset - Reset session',
+    '/reset - Reset current agent session',
     '/cron [list|reload|chatid] - Manage cron jobs',
     '/help - Show this help',
     '/document_scripts confirm - Auto-document available scripts (requires ALLOWED_USERS)',
@@ -274,10 +279,6 @@ function readNumberEnv(raw, fallback) {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return fallback;
   return value;
-}
-
-function getThreadKey(chatId) {
-  return String(chatId);
 }
 
 function persistThreads() {
@@ -611,9 +612,15 @@ async function runAgentOneShot(prompt) {
 }
 
 async function runAgentForChat(chatId, prompt, options = {}) {
-  const threadKey = getThreadKey(chatId);
-  const threadId = threads.get(threadKey);
   const agent = getAgent(globalAgent);
+  const { threadKey, threadId, migrated } = resolveThreadId(
+    threads,
+    chatId,
+    globalAgent
+  );
+  if (migrated) {
+    persistThreads().catch((err) => console.warn('Failed to persist migrated threads:', err));
+  }
   let promptWithContext = prompt;
   if (agent.id === 'claude') {
     promptWithContext = prefixTextWithTimestamp(promptWithContext, {
@@ -633,7 +640,8 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     IMAGE_DIR,
     options.scriptContext,
     options.documentPaths || [],
-    DOCUMENT_DIR
+    DOCUMENT_DIR,
+    { includeFileInstructions: !threadId }
   );
   const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
   const promptExpression = '"$PROMPT"';
@@ -658,7 +666,9 @@ async function runAgentForChat(chatId, prompt, options = {}) {
   }
 
   const startedAt = Date.now();
-  console.info(`Agent start chat=${chatId} thread=${threadId || 'new'}`);
+  console.info(
+    `Agent start chat=${chatId} agent=${agent.id} thread=${threadId || 'new'}`
+  );
   let output;
   let execError;
   try {
@@ -825,13 +835,8 @@ bot.command('agent', async (ctx) => {
   }
   const normalized = normalizeAgent(value);
   try {
-    const changed = normalized !== globalAgent;
     globalAgent = normalized;
     await updateConfig({ agent: normalized });
-    if (changed) {
-      threads.clear();
-      await persistThreads();
-    }
     ctx.reply(`Agent set to ${getAgentLabel(globalAgent)}.`);
   } catch (err) {
     console.error(err);
@@ -840,8 +845,10 @@ bot.command('agent', async (ctx) => {
 });
 
 bot.command('reset', async (ctx) => {
-  threads.delete(getThreadKey(ctx.chat.id));
-  persistThreads().catch((err) => console.warn('Failed to persist threads after reset:', err));
+  clearThreadForAgent(threads, ctx.chat.id, globalAgent);
+  persistThreads().catch((err) =>
+    console.warn('Failed to persist threads after reset:', err)
+  );
   ctx.reply('Session reset.');
 });
 
