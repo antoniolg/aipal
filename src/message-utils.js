@@ -289,8 +289,10 @@ function buildPrompt(
   imageDir,
   scriptContext,
   documentPaths = [],
-  documentDir
+  documentDir,
+  options = {}
 ) {
+  const includeFileInstructions = options.includeFileInstructions !== false;
   const lines = [];
   const context = (scriptContext || '').trim();
   if (context) {
@@ -314,13 +316,15 @@ function buildPrompt(
     }
     lines.push('Read documents from those paths if needed.');
   }
-  lines.push(
-    `If you generate an image, save it under ${imageDir} and reply with [[image:/absolute/path]] so the bot can send it.`
-  );
-  if (documentDir) {
+  if (includeFileInstructions) {
     lines.push(
-      `If you generate a document (or need to send a file), save it under ${documentDir} and reply with [[document:/absolute/path]] so the bot can send it.`
+      `If you generate an image, save it under ${imageDir} and reply with [[image:/absolute/path]] so the bot can send it.`
     );
+    if (documentDir) {
+      lines.push(
+        `If you generate a document (or need to send a file), save it under ${documentDir} and reply with [[document:/absolute/path]] so the bot can send it.`
+      );
+    }
   }
   return lines.join('\n');
 }
