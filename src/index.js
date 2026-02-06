@@ -130,6 +130,10 @@ const FILE_INSTRUCTIONS_EVERY = readNumberEnv(
   process.env.AIPAL_FILE_INSTRUCTIONS_EVERY,
   10
 );
+const SHUTDOWN_DRAIN_TIMEOUT_MS = readNumberEnv(
+  process.env.AIPAL_SHUTDOWN_DRAIN_TIMEOUT_MS,
+  15000
+);
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -831,6 +835,11 @@ function enqueue(chatId, fn) {
     console.error('Queue error', err);
   });
   queues.set(chatId, next);
+  next.finally(() => {
+    if (queues.get(chatId) === next) {
+      queues.delete(chatId);
+    }
+  });
   return next;
 }
 
@@ -1310,11 +1319,34 @@ function shutdown(signal) {
     console.warn('Failed to stop bot:', err);
   }
 
-  const timer = setTimeout(() => {
+  const forceTimer = setTimeout(() => {
     console.warn('Forcing process exit after shutdown timeout.');
     process.exit(0);
-  }, 2000);
-  if (typeof timer.unref === 'function') timer.unref();
+  }, SHUTDOWN_DRAIN_TIMEOUT_MS + 2000);
+  if (typeof forceTimer.unref === 'function') forceTimer.unref();
+
+  Promise.resolve()
+    .then(async () => {
+      const pending = Array.from(queues.values());
+      if (pending.length > 0) {
+        console.info(`Waiting for ${pending.length} queued job(s) to finish...`);
+        await Promise.race([
+          Promise.allSettled(pending),
+          new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_TIMEOUT_MS)),
+        ]);
+      }
+      await Promise.race([
+        Promise.allSettled([threadsPersist, agentOverridesPersist]),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    })
+    .catch((err) => {
+      console.warn('Error during shutdown drain:', err);
+    })
+    .finally(() => {
+      clearTimeout(forceTimer);
+      process.exit(0);
+    });
 }
 
 process.once('SIGINT', () => shutdown('SIGINT'));
