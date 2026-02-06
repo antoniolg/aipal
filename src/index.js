@@ -100,8 +100,10 @@ if (!BOT_TOKEN) {
 }
 
 
-const PARAKEET_CMD = 'parakeet-mlx';
-const PARAKEET_TIMEOUT_MS = 120000;
+const WHISPER_CMD = 'mlx_whisper';
+const WHISPER_TIMEOUT_MS = 300000;
+const WHISPER_MODEL = 'mlx-community/whisper-large-v3-turbo';
+const WHISPER_LANGUAGE = 'es';
 
 const IMAGE_DIR = path.resolve(path.join(os.tmpdir(), 'aipal', 'images'));
 const IMAGE_TTL_HOURS = 24;
@@ -508,21 +510,20 @@ async function downloadTelegramFile(ctx, payload, options = {}) {
   return filePath;
 }
 
-async function transcribeWithParakeet(audioPath) {
-  const outputDir = path.join(os.tmpdir(), 'parakeet-mlx');
+async function transcribeAudio(audioPath) {
+  const outputDir = path.join(os.tmpdir(), 'whisper-mlx');
   await fs.mkdir(outputDir, { recursive: true });
-  const outputTemplate = `parakeet-${randomUUID()}`;
+  const outputName = `whisper-${randomUUID()}`;
   const args = [
     audioPath,
-    '--output-dir',
-    outputDir,
-    '--output-format',
-    'txt',
-    '--output-template',
-    outputTemplate,
+    '--model', WHISPER_MODEL,
+    '--language', WHISPER_LANGUAGE,
+    '--output-dir', outputDir,
+    '--output-format', 'txt',
+    '--output-name', outputName,
   ];
-  await execLocal(PARAKEET_CMD, args, { timeout: PARAKEET_TIMEOUT_MS });
-  const outputPath = path.join(outputDir, `${outputTemplate}.txt`);
+  await execLocal(WHISPER_CMD, args, { timeout: WHISPER_TIMEOUT_MS });
+  const outputPath = path.join(outputDir, `${outputName}.txt`);
   const text = await fs.readFile(outputPath, 'utf8');
   return { text: text.trim(), outputPath };
 }
@@ -1120,7 +1121,7 @@ bot.on(['voice', 'audio', 'document'], (ctx, next) => {
         prefix: 'audio',
         errorLabel: 'audio',
       });
-      const { text, outputPath } = await transcribeWithParakeet(audioPath);
+      const { text, outputPath } = await transcribeAudio(audioPath);
       transcriptPath = outputPath;
       await replyWithTranscript(ctx, text, ctx.message?.message_id);
       if (!text) {
