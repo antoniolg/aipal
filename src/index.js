@@ -126,6 +126,10 @@ const AGENT_MAX_BUFFER = readNumberEnv(
   process.env.AIPAL_AGENT_MAX_BUFFER,
   10 * 1024 * 1024
 );
+const FILE_INSTRUCTIONS_EVERY = readNumberEnv(
+  process.env.AIPAL_FILE_INSTRUCTIONS_EVERY,
+  10
+);
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -156,6 +160,7 @@ let threads = new Map();
 let threadsPersist = Promise.resolve();
 let agentOverrides = new Map();
 let agentOverridesPersist = Promise.resolve();
+const threadTurns = new Map();
 const lastScriptOutputs = new Map();
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let globalThinking;
@@ -644,6 +649,10 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     topicId,
     effectiveAgentId
   );
+  const turnCount = (threadTurns.get(threadKey) || 0) + 1;
+  threadTurns.set(threadKey, turnCount);
+  const shouldIncludeFileInstructions =
+    !threadId || turnCount % FILE_INSTRUCTIONS_EVERY === 0;
   if (migrated) {
     persistThreads().catch((err) => console.warn('Failed to persist migrated threads:', err));
   }
@@ -667,7 +676,7 @@ async function runAgentForChat(chatId, prompt, options = {}) {
     options.scriptContext,
     options.documentPaths || [],
     DOCUMENT_DIR,
-    { includeFileInstructions: !threadId }
+    { includeFileInstructions: shouldIncludeFileInstructions }
   );
   const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
   const promptExpression = '"$PROMPT"';
@@ -908,6 +917,7 @@ bot.command('reset', async (ctx) => {
   const effectiveAgentId =
     getAgentOverride(agentOverrides, ctx.chat.id, topicId) || globalAgent;
   clearThreadForAgent(threads, ctx.chat.id, topicId, effectiveAgentId);
+  threadTurns.delete(`${buildTopicKey(ctx.chat.id, topicId)}:${effectiveAgentId}`);
   persistThreads().catch((err) =>
     console.warn('Failed to persist threads after reset:', err),
   );
