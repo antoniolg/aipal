@@ -1239,7 +1239,10 @@ async function handleCronTrigger(chatId, prompt, options = {}) {
   try {
     await bot.telegram.sendChatAction(chatId, 'typing');
     const response = await runAgentForChat(chatId, prompt, { agentId: agent });
-    if (response.trim() === 'HEARTBEAT_OK') return;
+    if (response.trim() === 'HEARTBEAT_OK') {
+      console.info(`Cron job ${jobId}: HEARTBEAT_OK (silent)`);
+      return;
+    }
     await sendResponseToChat(chatId, response);
   } catch (err) {
     console.error(`Cron job ${jobId} failed:`, err);
