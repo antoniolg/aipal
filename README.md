@@ -11,14 +11,12 @@ Minimal Telegram bot that forwards messages to a local CLI agent (Codex by defau
 - Queues requests per chat to avoid overlapping runs
 - Keeps agent session state per agent when JSON output is detected
 - Handles text, audio (via Parakeet), images, and documents
-- Optional TTS audio replies (macOS `say` + `afconvert`)
 - Supports `/thinking`, `/agent`, and `/cron` for runtime tweaks
 
 ## Requirements
 - Node.js 18+
 - Agent CLI on PATH (default: `codex`, or `claude` / `gemini` / `opencode` when configured)
 - Audio (optional): `parakeet-mlx` + `ffmpeg`
-- TTS audio (optional, macOS): `say` + `afconvert` (built-in)
 
 ## Quick start
 ```bash
@@ -51,8 +49,6 @@ Open Telegram, send `/start`, then any message.
 - `/agent default`: clear agent override for the current topic and return to global agent
 - `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id]`: view/set the model for the current agent (persisted in `config.json`)
-- `/voice <on|off|status>`: enable/disable audio replies for the current topic (persisted in `voice-overrides.json`)
-- `/tts <text>`: convert text to audio (or reply to a text message with `/tts`)
 - `/cron [list|reload|chatid]`: manage cron jobs (see below)
 - `/help`: list available commands and scripts
 - `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)
@@ -110,9 +106,6 @@ The only required environment variable is `TELEGRAM_BOT_TOKEN` in `.env`.
 Optional:
 - `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aipal/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
-- `AIPAL_TTS_VOICE`: voice for TTS replies (default: `Monica`)
-- `AIPAL_TTS_RATE_WPM`: speech rate for TTS (default: `190`)
-- `AIPAL_TTS_MAX_CHARS`: max characters converted to TTS (default: `4000`)
 - `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
 
 ## Config file (optional)
