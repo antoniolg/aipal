@@ -7,6 +7,12 @@ const { normalizeTopicId } = require('./thread-store');
 const DEFAULT_LIMIT = 8;
 const DEFAULT_MAX_FILES = 200;
 const DEFAULT_SNIPPET_LENGTH = 220;
+const DIVERSITY_SCOPE_ORDER = [
+  'same-thread',
+  'same-topic',
+  'global',
+  'same-chat',
+];
 
 const STOPWORDS = new Set([
   'a',
@@ -224,17 +230,64 @@ async function searchMemory(options = {}) {
     (a, b) => b.score - a.score || b.createdAt.localeCompare(a.createdAt)
   );
 
+  const uniqueByText = [];
   const seen = new Set();
-  const top = [];
   for (const event of scored) {
     const key = normalizeText(event.text).toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    top.push(event);
-    if (top.length >= limit) break;
+    uniqueByText.push(event);
   }
 
-  return top;
+  return selectDiversifiedResults(uniqueByText, limit);
+}
+
+function selectDiversifiedResults(events, limit) {
+  if (!Array.isArray(events) || events.length === 0 || limit <= 0) return [];
+
+  const byScope = new Map();
+  for (const scope of DIVERSITY_SCOPE_ORDER) {
+    byScope.set(scope, []);
+  }
+
+  for (const event of events) {
+    const scope = byScope.has(event.scope) ? event.scope : 'global';
+    byScope.get(scope).push(event);
+  }
+
+  const selected = [];
+  const selectedIds = new Set();
+
+  for (const scope of DIVERSITY_SCOPE_ORDER) {
+    if (selected.length >= limit) break;
+    const candidates = byScope.get(scope) || [];
+    if (!candidates.length) continue;
+    const event = candidates.shift();
+    const eventIdentity = getEventIdentity(event);
+    if (!event || selectedIds.has(eventIdentity)) continue;
+    selected.push(event);
+    selectedIds.add(eventIdentity);
+  }
+
+  for (const event of events) {
+    if (selected.length >= limit) break;
+    const eventIdentity = getEventIdentity(event);
+    if (selectedIds.has(eventIdentity)) continue;
+    selected.push(event);
+    selectedIds.add(eventIdentity);
+  }
+
+  return selected;
+}
+
+function getEventIdentity(event) {
+  if (event?.id) return String(event.id);
+  const createdAt = toIsoDate(event?.createdAt);
+  const chatId = String(event?.chatId || '');
+  const topicId = normalizeTopicId(event?.topicId);
+  const role = String(event?.role || '');
+  const text = normalizeText(event?.text || '');
+  return `${createdAt}|${chatId}|${topicId}|${role}|${text}`;
 }
 
 async function buildMemoryRetrievalContext(options = {}) {

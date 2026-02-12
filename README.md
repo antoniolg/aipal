@@ -135,7 +135,7 @@ Location:
 - Every interaction is captured automatically in per-thread files under `~/.config/aipal/memory/threads/*.jsonl` (or `$XDG_CONFIG_HOME/aipal/memory/threads/*.jsonl`).
 - Memory is isolated by `chatId:topicId:agentId` to avoid collisions across agents and topics.
 - `memory.md` remains the global curated memory. The bot can curate it automatically and via `/memory curate`.
-- Retrieval (iteration 1): lexical + recency retrieval over captured thread events is injected into prompts automatically.
+- Retrieval (iteration 1): lexical + recency retrieval over captured thread events is injected into prompts automatically, mixing local and global memory scope.
 - `/memory status` shows memory health, `/memory tail` shows recent events, `/memory search` lets you inspect retrieval hits.
 
 ## Security notes

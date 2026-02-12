@@ -76,3 +76,52 @@ test('buildMemoryRetrievalContext renders compact retrieval block', async () => 
   assert.match(context, /same-thread/);
   assert.match(context, /curación al hacer reset/i);
 });
+
+test('searchMemory includes global context when available', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-retrieval-'));
+  const { memoryStore, retrieval } = loadModules(dir);
+
+  await memoryStore.appendMemoryEvent({
+    threadKey: '10:topicA:codex',
+    chatId: '10',
+    topicId: 'topicA',
+    agentId: 'codex',
+    role: 'user',
+    text: 'Necesito mejorar el memory retrieval de Aipal',
+  });
+  await memoryStore.appendMemoryEvent({
+    threadKey: '10:topicA:codex',
+    chatId: '10',
+    topicId: 'topicA',
+    agentId: 'codex',
+    role: 'assistant',
+    text: 'Podemos hacer curación automática de memoria',
+  });
+  await memoryStore.appendMemoryEvent({
+    threadKey: '10:topicA:codex',
+    chatId: '10',
+    topicId: 'topicA',
+    agentId: 'codex',
+    role: 'user',
+    text: 'También quiero que el retrieval sea práctico',
+  });
+  await memoryStore.appendMemoryEvent({
+    threadKey: '20:topicB:codex',
+    chatId: '20',
+    topicId: 'topicB',
+    agentId: 'codex',
+    role: 'user',
+    text: 'Objetivo: cerebro global entre topics con retrieval',
+  });
+
+  const hits = await retrieval.searchMemory({
+    query: 'retrieval cerebro global',
+    chatId: '10',
+    topicId: 'topicA',
+    agentId: 'codex',
+    limit: 8,
+  });
+
+  assert.ok(hits.length >= 2);
+  assert.ok(hits.some((hit) => hit.scope === 'global'));
+});

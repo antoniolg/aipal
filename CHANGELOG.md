@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 - Automatic memory capture per conversation/agent into `memory/threads/*.jsonl`.
 - `/memory` command with `status`, `tail`, `search`, and `curate` subcommands.
 - Thread-specific memory bootstrap on the first turn of a new agent session.
-- Retrieval iteration 1: lexical + recency memory retrieval injected into prompts, plus `/memory search`.
+- Retrieval iteration 1: lexical + recency memory retrieval injected into prompts with mixed-scope selection (same thread/topic + global), plus `/memory search`.
 
 ### Changed
 - `memory.md` now supports an auto-generated section (between markers) curated from thread events while preserving manual notes.
