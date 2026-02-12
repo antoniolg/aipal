@@ -5,6 +5,9 @@
   "description": "Telegram bot that forwards messages to a local CLI agent (Codex by default).",
   "main": "src/index.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "node --check src/index.js",
     "dev": "node --watch src/index.js",

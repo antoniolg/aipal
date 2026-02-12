@@ -14,7 +14,7 @@ Minimal Telegram bot that forwards messages to a local CLI agent (Codex by defau
 - Supports `/thinking`, `/agent`, and `/cron` for runtime tweaks
 
 ## Requirements
-- Node.js 18+
+- Node.js 24+
 - Agent CLI on PATH (default: `codex`, or `claude` / `gemini` / `opencode` when configured)
 - Audio (optional): `parakeet-mlx` + `ffmpeg`
 
@@ -136,6 +136,7 @@ Location:
 - Memory is isolated by `chatId:topicId:agentId` to avoid collisions across agents and topics.
 - `memory.md` remains the global curated memory. The bot can curate it automatically and via `/memory curate`.
 - Retrieval (iteration 1): lexical + recency retrieval over captured thread events is injected into prompts automatically, mixing local and global memory scope.
+- Captured events are indexed in SQLite (`memory/index.sqlite`) for faster and broader retrieval across topics.
 - `/memory status` shows memory health, `/memory tail` shows recent events, `/memory search` lets you inspect retrieval hits.
 
 ## Security notes
