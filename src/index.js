@@ -1,11 +1,6 @@
 require('dotenv').config();
 
 const { Telegraf } = require('telegraf');
-const { randomUUID } = require('crypto');
-const { constants: fsConstants } = require('fs');
-const fs = require('fs/promises');
-const os = require('os');
-const path = require('path');
 const {
   AGENT_CODEX,
   getAgent,
@@ -34,7 +29,6 @@ const {
   setAgentOverride,
 } = require('./agent-overrides');
 const {
-  buildThreadKey,
   buildTopicKey,
   clearThreadForAgent,
   normalizeTopicId,
@@ -110,6 +104,11 @@ const {
 const { createAppState } = require('./app/state');
 const { execLocal, shellQuote, wrapCommandWithPty } = require('./services/process');
 const { createEnqueue } = require('./services/queue');
+const { createAgentRunner } = require('./services/agent-runner');
+const { createFileService } = require('./services/files');
+const { createMemoryService } = require('./services/memory');
+const { createScriptService } = require('./services/scripts');
+const { createTelegramReplyService } = require('./services/telegram-reply');
 
 installLogTimestamps();
 
@@ -154,6 +153,111 @@ let cronDefaultChatId = null;
 const enqueue = createEnqueue(queues);
 
 const scriptManager = new ScriptManager(SCRIPTS_DIR);
+const scriptService = createScriptService({
+  execLocal,
+  isPathInside,
+  scriptNameRegex: SCRIPT_NAME_REGEX,
+  scriptsDir: SCRIPTS_DIR,
+  scriptTimeoutMs: SCRIPT_TIMEOUT_MS,
+  scriptContextMaxChars: SCRIPT_CONTEXT_MAX_CHARS,
+  lastScriptOutputs,
+});
+const { consumeScriptContext, formatScriptContext, runScriptCommand } = scriptService;
+
+const fileService = createFileService({
+  execLocal,
+  extensionFromMime,
+  extensionFromUrl,
+  imageCleanupIntervalMs: IMAGE_CLEANUP_INTERVAL_MS,
+  imageDir: IMAGE_DIR,
+  imageTtlHours: IMAGE_TTL_HOURS,
+  whisperCmd: WHISPER_CMD,
+  whisperLanguage: WHISPER_LANGUAGE,
+  whisperModel: WHISPER_MODEL,
+  whisperTimeoutMs: WHISPER_TIMEOUT_MS,
+  documentCleanupIntervalMs: DOCUMENT_CLEANUP_INTERVAL_MS,
+  documentDir: DOCUMENT_DIR,
+  documentTtlHours: DOCUMENT_TTL_HOURS,
+});
+const {
+  downloadTelegramFile,
+  safeUnlink,
+  startDocumentCleanup,
+  startImageCleanup,
+  transcribeAudio,
+} = fileService;
+
+const memoryService = createMemoryService({
+  appendMemoryEvent,
+  buildThreadBootstrap,
+  configPath: CONFIG_PATH,
+  curateMemory,
+  documentDir: DOCUMENT_DIR,
+  extractDocumentTokens,
+  extractImageTokens,
+  imageDir: IMAGE_DIR,
+  memoryCurateEvery: MEMORY_CURATE_EVERY,
+  memoryPath: MEMORY_PATH,
+  persistMemory,
+  readMemory,
+  readSoul,
+  readTools,
+  soulPath: SOUL_PATH,
+  toolsPath: TOOLS_PATH,
+  getMemoryEventsSinceCurate: () => memoryEventsSinceCurate,
+  setMemoryEventsSinceCurate: (value) => {
+    memoryEventsSinceCurate = value;
+  },
+});
+const { buildBootstrapContext, captureMemoryEvent, extractMemoryText } = memoryService;
+
+const agentRunner = createAgentRunner({
+  agentMaxBuffer: AGENT_MAX_BUFFER,
+  agentTimeoutMs: AGENT_TIMEOUT_MS,
+  buildBootstrapContext,
+  buildMemoryRetrievalContext,
+  buildPrompt,
+  documentDir: DOCUMENT_DIR,
+  execLocal,
+  fileInstructionsEvery: FILE_INSTRUCTIONS_EVERY,
+  getAgent,
+  getAgentLabel,
+  getGlobalAgent: () => globalAgent,
+  getGlobalModels: () => globalModels,
+  getGlobalThinking: () => globalThinking,
+  getThreads: () => threads,
+  imageDir: IMAGE_DIR,
+  memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
+  persistThreads,
+  prefixTextWithTimestamp,
+  resolveEffectiveAgentId,
+  resolveThreadId,
+  shellQuote,
+  threadTurns,
+  wrapCommandWithPty,
+  defaultTimeZone: DEFAULT_TIME_ZONE,
+});
+const { runAgentForChat, runAgentOneShot } = agentRunner;
+
+const telegramReplyService = createTelegramReplyService({
+  bot,
+  chunkMarkdown,
+  chunkText,
+  documentDir: DOCUMENT_DIR,
+  extractDocumentTokens,
+  extractImageTokens,
+  formatError,
+  imageDir: IMAGE_DIR,
+  isPathInside,
+  markdownToTelegramHtml,
+});
+const {
+  replyWithError,
+  replyWithResponse,
+  replyWithTranscript,
+  sendResponseToChat,
+  startTyping,
+} = telegramReplyService;
 
 bot.command('help', async (ctx) => {
   const builtIn = [
@@ -311,79 +415,6 @@ function buildMemoryThreadKey(chatId, topicId, agentId) {
   return buildThreadKey(chatId, normalizeTopicId(topicId), agentId);
 }
 
-function extractMemoryText(response) {
-  const { cleanedText: withoutImages } = extractImageTokens(
-    response || '',
-    IMAGE_DIR
-  );
-  const { cleanedText } = extractDocumentTokens(withoutImages, DOCUMENT_DIR);
-  return String(cleanedText || '').trim();
-}
-
-function maybeAutoCurateMemory() {
-  memoryEventsSinceCurate += 1;
-  if (memoryEventsSinceCurate < MEMORY_CURATE_EVERY) return;
-  memoryEventsSinceCurate = 0;
-  persistMemory(async () => {
-    try {
-      const result = await curateMemory();
-      console.info(
-        `Auto-curated memory events=${result.eventsProcessed} bytes=${result.bytes}`
-      );
-    } catch (err) {
-      console.warn('Auto memory curation failed:', err);
-    }
-  }).catch((err) => {
-    console.warn('Failed to schedule auto memory curation:', err);
-  });
-}
-
-async function captureMemoryEvent(event) {
-  try {
-    await appendMemoryEvent(event);
-    maybeAutoCurateMemory();
-  } catch (err) {
-    console.warn('Failed to append memory event:', err);
-  }
-}
-
-async function buildBootstrapContext(options = {}) {
-  const { threadKey } = options;
-  const soul = await readSoul();
-  const tools = await readTools();
-  const memory = await readMemory();
-  const lines = [
-    'Bootstrap config:',
-    `Config JSON: ${CONFIG_PATH}`,
-    `Soul file: ${SOUL_PATH}`,
-    `Tools file: ${TOOLS_PATH}`,
-    `Memory file: ${MEMORY_PATH}`,
-  ];
-  if (soul.exists && soul.content) {
-    lines.push('Soul (soul.md):');
-    lines.push(soul.content);
-    lines.push('End of soul.');
-  }
-  if (tools.exists && tools.content) {
-    lines.push('Tools (tools.md):');
-    lines.push(tools.content);
-    lines.push('End of tools.');
-  }
-  if (memory.exists && memory.content) {
-    lines.push('Memory (memory.md):');
-    lines.push(memory.content);
-    lines.push('End of memory.');
-  }
-  if (threadKey) {
-    const threadBootstrap = await buildThreadBootstrap(threadKey);
-    if (threadBootstrap) {
-      lines.push(threadBootstrap);
-      lines.push('End of thread memory.');
-    }
-  }
-  return lines.join('\n');
-}
-
 let cronScheduler = null;
 
 async function hydrateGlobalSettings() {
@@ -393,474 +424,8 @@ async function hydrateGlobalSettings() {
   return config;
 }
 
-function splitArgs(input) {
-  const args = [];
-  let current = '';
-  let quote = null;
-  for (let i = 0; i < input.length; i += 1) {
-    const ch = input[i];
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-        continue;
-      }
-      if (ch === '\\' && quote === '"' && i + 1 < input.length) {
-        current += input[i + 1];
-        i += 1;
-        continue;
-      }
-      current += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (current) {
-        args.push(current);
-        current = '';
-      }
-      continue;
-    }
-    if (ch === '\\' && i + 1 < input.length) {
-      current += input[i + 1];
-      i += 1;
-      continue;
-    }
-    current += ch;
-  }
-  if (current) args.push(current);
-  return args;
-}
-
-async function runScriptCommand(commandName, rawArgs) {
-  if (!SCRIPT_NAME_REGEX.test(commandName)) {
-    throw new Error(`Invalid script name: ${commandName}`);
-  }
-  const scriptPath = path.resolve(SCRIPTS_DIR, commandName);
-  if (!isPathInside(SCRIPTS_DIR, scriptPath)) {
-    throw new Error(`Invalid script path: ${scriptPath}`);
-  }
-  try {
-    await fs.access(scriptPath, fsConstants.X_OK);
-  } catch (err) {
-    if (err && err.code === 'ENOENT') {
-      throw new Error(`Script not found: ${scriptPath}`);
-    }
-    if (err && err.code === 'EACCES') {
-      throw new Error(`Script not executable: ${scriptPath}`);
-    }
-    throw err;
-  }
-  const argv = splitArgs(rawArgs || '');
-  return execLocal(scriptPath, argv, {
-    timeout: SCRIPT_TIMEOUT_MS,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-}
-
-function formatScriptContext(entry) {
-  if (!entry) return '';
-  const output = String(entry.output || '').trim() || '(no output)';
-  if (output.length <= SCRIPT_CONTEXT_MAX_CHARS) {
-    return `/${entry.name} output:\n${output}`;
-  }
-  const truncated = output.slice(0, SCRIPT_CONTEXT_MAX_CHARS);
-  const remaining = output.length - SCRIPT_CONTEXT_MAX_CHARS;
-  return `/${entry.name} output (truncated ${remaining} chars):\n${truncated}`;
-}
-
-function consumeScriptContext(topicKey) {
-  const entry = lastScriptOutputs.get(topicKey);
-  if (!entry) return '';
-  lastScriptOutputs.delete(topicKey);
-  return formatScriptContext(entry);
-}
-
 function getTopicId(ctx) {
   return ctx?.message?.message_thread_id;
-}
-
-async function replyWithError(ctx, label, err) {
-  const detail = formatError(err);
-  const text = `${label}\n${detail}`.trim();
-  for (const chunk of chunkText(text, 3500)) {
-    await ctx.reply(chunk);
-  }
-}
-
-function startTyping(ctx) {
-  const send = async () => {
-    try {
-      await ctx.sendChatAction('typing');
-    } catch (err) {
-      console.error('Typing error', err);
-    }
-  };
-  send();
-  const timer = setInterval(send, 4000);
-  return () => clearInterval(timer);
-}
-
-async function downloadTelegramFile(ctx, payload, options = {}) {
-  const {
-    dir = path.join(os.tmpdir(), 'aipal'),
-    prefix = 'file',
-    errorLabel = 'file',
-  } = options;
-  const link = await ctx.telegram.getFileLink(payload.fileId);
-  const url = typeof link === 'string' ? link : link.href;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${errorLabel} (${response.status})`);
-  }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await fs.mkdir(dir, { recursive: true });
-  const extFromName = payload.fileName ? path.extname(payload.fileName) : '';
-  const ext = extFromName || extensionFromMime(payload.mimeType) || extensionFromUrl(url) || '.bin';
-  const filePath = path.join(dir, `${prefix}-${randomUUID()}${ext}`);
-  await fs.writeFile(filePath, buffer);
-  return filePath;
-}
-
-async function transcribeAudio(audioPath) {
-  const outputDir = path.join(os.tmpdir(), 'whisper-mlx');
-  await fs.mkdir(outputDir, { recursive: true });
-  const outputName = `whisper-${randomUUID()}`;
-  const args = [
-    audioPath,
-    '--model', WHISPER_MODEL,
-    '--language', WHISPER_LANGUAGE,
-    '--output-dir', outputDir,
-    '--output-format', 'txt',
-    '--output-name', outputName,
-    '--condition-on-previous-text', 'False',
-    '--word-timestamps', 'True',
-    '--hallucination-silence-threshold', '2',
-  ];
-  await execLocal(WHISPER_CMD, args, { timeout: WHISPER_TIMEOUT_MS });
-  const outputPath = path.join(outputDir, `${outputName}.txt`);
-  const text = await fs.readFile(outputPath, 'utf8');
-  return { text: text.trim(), outputPath };
-}
-
-async function safeUnlink(filePath) {
-  if (!filePath) return;
-  try {
-    await fs.unlink(filePath);
-  } catch { }
-}
-
-async function cleanupOldFiles(dir, maxAgeMs, label) {
-  try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    const now = Date.now();
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const filePath = path.join(dir, entry.name);
-      const stat = await fs.stat(filePath);
-      if (now - stat.mtimeMs > maxAgeMs) {
-        await safeUnlink(filePath);
-      }
-    }
-  } catch (err) {
-    if (err && err.code !== 'ENOENT') {
-      console.warn(`${label} cleanup failed:`, err);
-    }
-  }
-}
-
-function startImageCleanup() {
-  if (!Number.isFinite(IMAGE_TTL_HOURS) || IMAGE_TTL_HOURS <= 0) return;
-  const maxAgeMs = IMAGE_TTL_HOURS * 60 * 60 * 1000;
-  const run = () => cleanupOldFiles(IMAGE_DIR, maxAgeMs, 'Image');
-  run();
-  if (Number.isFinite(IMAGE_CLEANUP_INTERVAL_MS) && IMAGE_CLEANUP_INTERVAL_MS > 0) {
-    const timer = setInterval(run, IMAGE_CLEANUP_INTERVAL_MS);
-    if (typeof timer.unref === 'function') {
-      timer.unref();
-    }
-  }
-}
-
-function startDocumentCleanup() {
-  if (!Number.isFinite(DOCUMENT_TTL_HOURS) || DOCUMENT_TTL_HOURS <= 0) return;
-  const maxAgeMs = DOCUMENT_TTL_HOURS * 60 * 60 * 1000;
-  const run = () => cleanupOldFiles(DOCUMENT_DIR, maxAgeMs, 'Document');
-  run();
-  if (Number.isFinite(DOCUMENT_CLEANUP_INTERVAL_MS) && DOCUMENT_CLEANUP_INTERVAL_MS > 0) {
-    const timer = setInterval(run, DOCUMENT_CLEANUP_INTERVAL_MS);
-    if (typeof timer.unref === 'function') {
-      timer.unref();
-    }
-  }
-}
-
-async function runAgentOneShot(prompt) {
-  const agent = getAgent(globalAgent);
-  const thinking = globalThinking;
-  let promptText = String(prompt || '');
-  if (agent.id === 'claude') {
-    promptText = prefixTextWithTimestamp(promptText, { timeZone: DEFAULT_TIME_ZONE });
-  }
-  const promptBase64 = Buffer.from(promptText, 'utf8').toString('base64');
-  const promptExpression = '"$PROMPT"';
-  const agentCmd = agent.buildCommand({
-    prompt: promptText,
-    promptExpression,
-    threadId: undefined,
-    thinking,
-  });
-
-  const command = [
-    `PROMPT_B64=${shellQuote(promptBase64)};`,
-    'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
-    `${agentCmd}`,
-  ].join(' ');
-
-  let commandToRun = command;
-  if (agent.needsPty) {
-    commandToRun = wrapCommandWithPty(commandToRun);
-  }
-  if (agent.mergeStderr) {
-    commandToRun = `${commandToRun} 2>&1`;
-  }
-
-  const startedAt = Date.now();
-  console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
-  let output;
-  let execError;
-  try {
-    output = await execLocal('bash', ['-lc', commandToRun], {
-      timeout: AGENT_TIMEOUT_MS,
-      maxBuffer: AGENT_MAX_BUFFER,
-    });
-  } catch (err) {
-    execError = err;
-    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
-      output = err.stdout;
-    } else {
-      throw err;
-    }
-  } finally {
-    const elapsedMs = Date.now() - startedAt;
-    console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
-  }
-
-  const parsed = agent.parseOutput(output);
-  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
-    throw execError;
-  }
-  if (execError) {
-    console.warn(
-      `Agent one-shot exited non-zero; returning stdout (code=${execError.code || 'unknown'})`
-    );
-  }
-  return parsed.text || output;
-}
-
-async function runAgentForChat(chatId, prompt, options = {}) {
-  const { topicId, agentId: overrideAgentId } = options;
-  const effectiveAgentId = resolveEffectiveAgentId(
-    chatId,
-    topicId,
-    overrideAgentId
-  );
-  const agent = getAgent(effectiveAgentId);
-
-  const { threadKey, threadId, migrated } = resolveThreadId(
-    threads,
-    chatId,
-    topicId,
-    effectiveAgentId
-  );
-  const turnCount = (threadTurns.get(threadKey) || 0) + 1;
-  threadTurns.set(threadKey, turnCount);
-  const shouldIncludeFileInstructions =
-    !threadId || turnCount % FILE_INSTRUCTIONS_EVERY === 0;
-  if (migrated) {
-    persistThreads().catch((err) => console.warn('Failed to persist migrated threads:', err));
-  }
-  let promptWithContext = prompt;
-  if (agent.id === 'claude') {
-    promptWithContext = prefixTextWithTimestamp(promptWithContext, {
-      timeZone: DEFAULT_TIME_ZONE,
-    });
-  }
-  if (!threadId) {
-    const bootstrap = await buildBootstrapContext({ threadKey });
-    promptWithContext = promptWithContext
-      ? `${bootstrap}\n\n${promptWithContext}`
-      : bootstrap;
-  }
-  const retrievalContext = await buildMemoryRetrievalContext({
-    query: prompt,
-    chatId,
-    topicId,
-    agentId: effectiveAgentId,
-    limit: MEMORY_RETRIEVAL_LIMIT,
-  });
-  if (retrievalContext) {
-    promptWithContext = promptWithContext
-      ? `${promptWithContext}\n\n${retrievalContext}`
-      : retrievalContext;
-  }
-  const thinking = globalThinking;
-  const finalPrompt = buildPrompt(
-    promptWithContext,
-    options.imagePaths || [],
-    IMAGE_DIR,
-    options.scriptContext,
-    options.documentPaths || [],
-    DOCUMENT_DIR,
-    { includeFileInstructions: shouldIncludeFileInstructions }
-  );
-  const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
-  const promptExpression = '"$PROMPT"';
-  const agentCmd = agent.buildCommand({
-    prompt: finalPrompt,
-    promptExpression,
-    threadId,
-    thinking,
-    model: globalModels[effectiveAgentId],
-  });
-  const command = [
-    `PROMPT_B64=${shellQuote(promptBase64)};`,
-    'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
-    `${agentCmd}`,
-  ].join(' ');
-  let commandToRun = command;
-  if (agent.needsPty) {
-    commandToRun = wrapCommandWithPty(commandToRun);
-  }
-  if (agent.mergeStderr) {
-    commandToRun = `${commandToRun} 2>&1`;
-  }
-
-  const startedAt = Date.now();
-  console.info(
-    `Agent start chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} thread=${threadId || 'new'}`
-  );
-  let output;
-  let execError;
-  try {
-    output = await execLocal('bash', ['-lc', commandToRun], {
-      timeout: AGENT_TIMEOUT_MS,
-      maxBuffer: AGENT_MAX_BUFFER,
-    });
-  } catch (err) {
-    execError = err;
-    if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
-      output = err.stdout;
-    } else {
-      throw err;
-    }
-  } finally {
-    const elapsedMs = Date.now() - startedAt;
-    console.info(`Agent finished chat=${chatId} topic=${topicId || 'root'} durationMs=${elapsedMs}`);
-  }
-  const parsed = agent.parseOutput(output);
-  if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
-    throw execError;
-  }
-  if (execError) {
-    console.warn(
-      `Agent exited non-zero; returning stdout chat=${chatId} topic=${topicId || 'root'} code=${execError.code || 'unknown'}`
-    );
-  }
-  if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
-    try {
-      const listCommand = agent.listSessionsCommand();
-      let listCommandToRun = listCommand;
-      if (agent.needsPty) {
-        listCommandToRun = wrapCommandWithPty(listCommandToRun);
-      }
-      if (agent.mergeStderr) {
-        listCommandToRun = `${listCommandToRun} 2>&1`;
-      }
-      const listOutput = await execLocal('bash', ['-lc', listCommandToRun], {
-        timeout: AGENT_TIMEOUT_MS,
-        maxBuffer: AGENT_MAX_BUFFER,
-      });
-      if (typeof agent.parseSessionList === 'function') {
-        const resolved = agent.parseSessionList(listOutput);
-        if (resolved) {
-          parsed.threadId = resolved;
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to resolve agent session id:', err?.message || err);
-    }
-  }
-  if (parsed.threadId) {
-    threads.set(threadKey, parsed.threadId);
-    persistThreads().catch((err) => console.warn('Failed to persist threads:', err));
-  }
-  return parsed.text || output;
-}
-
-async function replyWithResponse(ctx, response) {
-  const { cleanedText: afterImages, imagePaths } = extractImageTokens(
-    response || '',
-    IMAGE_DIR
-  );
-  const { cleanedText, documentPaths } = extractDocumentTokens(
-    afterImages,
-    DOCUMENT_DIR
-  );
-  const text = cleanedText.trim();
-  if (text) {
-    for (const chunk of chunkMarkdown(text, 3000)) {
-      const formatted = markdownToTelegramHtml(chunk) || chunk;
-      await ctx.reply(formatted, { parse_mode: 'HTML', disable_web_page_preview: true });
-    }
-  }
-  const uniqueImages = Array.from(new Set(imagePaths));
-  for (const imagePath of uniqueImages) {
-    try {
-      if (!isPathInside(IMAGE_DIR, imagePath)) {
-        console.warn('Skipping image outside IMAGE_DIR:', imagePath);
-        continue;
-      }
-      await fs.access(imagePath);
-      await ctx.replyWithPhoto({ source: imagePath });
-    } catch (err) {
-      console.warn('Failed to send image:', imagePath, err);
-    }
-  }
-  const uniqueDocuments = Array.from(new Set(documentPaths));
-  for (const documentPath of uniqueDocuments) {
-    try {
-      if (!isPathInside(DOCUMENT_DIR, documentPath)) {
-        console.warn('Skipping document outside DOCUMENT_DIR:', documentPath);
-        continue;
-      }
-      await fs.access(documentPath);
-      await ctx.replyWithDocument({ source: documentPath });
-    } catch (err) {
-      console.warn('Failed to send document:', documentPath, err);
-    }
-  }
-  if (!text && uniqueImages.length === 0 && uniqueDocuments.length === 0) {
-    await ctx.reply('(no response)');
-  }
-}
-
-async function replyWithTranscript(ctx, transcript, replyToMessageId) {
-  const header = 'Transcript:';
-  const text = String(transcript || '').trim();
-  const replyOptions = replyToMessageId ? { reply_to_message_id: replyToMessageId } : undefined;
-  if (!text) {
-    await ctx.reply(`${header}\n(vacía)`, replyOptions);
-    return;
-  }
-  const maxChunkSize = Math.max(1, 3500 - header.length - 1);
-  const chunks = chunkText(text, maxChunkSize);
-  for (let i = 0; i < chunks.length; i += 1) {
-    const prefix = i === 0 ? `${header}\n` : '';
-    await ctx.reply(`${prefix}${chunks[i]}`, replyOptions);
-  }
 }
 
 bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`));
@@ -1585,50 +1150,6 @@ bot.on('document', (ctx) => {
     }
   });
 });
-
-async function sendResponseToChat(chatId, response, options = {}) {
-  const { topicId } = options;
-  const threadExtra = topicId ? { message_thread_id: topicId } : {};
-  const { cleanedText: afterImages, imagePaths } = extractImageTokens(
-    response || '',
-    IMAGE_DIR
-  );
-  const { cleanedText, documentPaths } = extractDocumentTokens(
-    afterImages,
-    DOCUMENT_DIR
-  );
-  const text = cleanedText.trim();
-  if (text) {
-    for (const chunk of chunkMarkdown(text, 3000)) {
-      const formatted = markdownToTelegramHtml(chunk) || chunk;
-      await bot.telegram.sendMessage(chatId, formatted, {
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        ...threadExtra,
-      });
-    }
-  }
-  const uniqueImages = Array.from(new Set(imagePaths));
-  for (const imagePath of uniqueImages) {
-    try {
-      if (!isPathInside(IMAGE_DIR, imagePath)) continue;
-      await fs.access(imagePath);
-      await bot.telegram.sendPhoto(chatId, { source: imagePath }, threadExtra);
-    } catch (err) {
-      console.warn('Failed to send image:', imagePath, err);
-    }
-  }
-  const uniqueDocuments = Array.from(new Set(documentPaths));
-  for (const documentPath of uniqueDocuments) {
-    try {
-      if (!isPathInside(DOCUMENT_DIR, documentPath)) continue;
-      await fs.access(documentPath);
-      await bot.telegram.sendDocument(chatId, { source: documentPath }, threadExtra);
-    } catch (err) {
-      console.warn('Failed to send document:', documentPath, err);
-    }
-  }
-}
 
 async function handleCronTrigger(chatId, prompt, options = {}) {
   const { jobId, agent, topicId } = options;
