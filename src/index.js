@@ -110,6 +110,7 @@ const { createMemoryService } = require('./services/memory');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
 const { registerCommands } = require('./app/register-commands');
+const { registerHandlers } = require('./app/register-handlers');
 
 installLogTimestamps();
 
@@ -375,323 +376,34 @@ registerCommands({
   runAgentOneShot,
 });
 
-bot.on('text', (ctx) => {
-  const chatId = ctx.chat.id;
-  const topicId = getTopicId(ctx);
-  const topicKey = buildTopicKey(chatId, topicId);
-  const text = ctx.message.text.trim();
-  if (!text) return;
-
-  const slash = parseSlashCommand(text);
-  if (slash) {
-    const normalized = slash.name.toLowerCase();
-    if (
-      [
-        'start',
-        'thinking',
-        'agent',
-        'model',
-        'memory',
-        'reset',
-        'cron',
-        'help',
-        'document_scripts',
-      ].includes(normalized)
-    ) {
-      return;
-    }
-    enqueue(topicKey, async () => {
-      const stopTyping = startTyping(ctx);
-      const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
-      const memoryThreadKey = buildMemoryThreadKey(
-        chatId,
-        topicId,
-        effectiveAgentId
-      );
-      try {
-        await captureMemoryEvent({
-          threadKey: memoryThreadKey,
-          chatId,
-          topicId,
-          agentId: effectiveAgentId,
-          role: 'user',
-          kind: 'command',
-          text,
-        });
-        let scriptMeta = {};
-        try {
-          scriptMeta = await scriptManager.getScriptMetadata(slash.name);
-        } catch (err) {
-          console.error('Failed to read script metadata', err);
-          scriptMeta = {};
-        }
-        const output = await runScriptCommand(slash.name, slash.args);
-        const llmPrompt =
-          typeof scriptMeta?.llm?.prompt === 'string' ? scriptMeta.llm.prompt.trim() : '';
-        if (llmPrompt) {
-          const scriptContext = formatScriptContext({
-            name: slash.name,
-            output,
-          });
-          const response = await runAgentForChat(chatId, llmPrompt, {
-            topicId,
-            scriptContext,
-          });
-          await captureMemoryEvent({
-            threadKey: memoryThreadKey,
-            chatId,
-            topicId,
-            agentId: effectiveAgentId,
-            role: 'assistant',
-            kind: 'text',
-            text: extractMemoryText(response),
-          });
-          stopTyping();
-          await replyWithResponse(ctx, response);
-          return;
-        }
-        lastScriptOutputs.set(topicKey, { name: slash.name, output });
-        await captureMemoryEvent({
-          threadKey: memoryThreadKey,
-          chatId,
-          topicId,
-          agentId: effectiveAgentId,
-          role: 'assistant',
-          kind: 'text',
-          text: extractMemoryText(output),
-        });
-        stopTyping();
-        await replyWithResponse(ctx, output);
-      } catch (err) {
-        console.error(err);
-        stopTyping();
-        await replyWithError(ctx, `Error running /${slash.name}.`, err);
-      }
-    });
-    return;
-  }
-
-  enqueue(topicKey, async () => {
-    const stopTyping = startTyping(ctx);
-    const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
-    const memoryThreadKey = buildMemoryThreadKey(
-      chatId,
-      topicId,
-      effectiveAgentId
-    );
-    try {
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'user',
-        kind: 'text',
-        text,
-      });
-      const scriptContext = consumeScriptContext(topicKey);
-      const response = await runAgentForChat(chatId, text, {
-        topicId,
-        scriptContext,
-      });
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'assistant',
-        kind: 'text',
-        text: extractMemoryText(response),
-      });
-      stopTyping();
-      await replyWithResponse(ctx, response);
-    } catch (err) {
-      console.error(err);
-      stopTyping();
-      await replyWithError(ctx, 'Error processing response.', err);
-    }
-  });
-});
-
-bot.on(['voice', 'audio', 'document'], (ctx, next) => {
-  const chatId = ctx.chat.id;
-  const topicId = getTopicId(ctx);
-  const topicKey = buildTopicKey(chatId, topicId);
-  const payload = getAudioPayload(ctx.message);
-  if (!payload) return next();
-
-  enqueue(topicKey, async () => {
-    const stopTyping = startTyping(ctx);
-    const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
-    const memoryThreadKey = buildMemoryThreadKey(
-      chatId,
-      topicId,
-      effectiveAgentId
-    );
-    let audioPath;
-    let transcriptPath;
-    try {
-      audioPath = await downloadTelegramFile(ctx, payload, {
-        prefix: 'audio',
-        errorLabel: 'audio',
-      });
-      const { text, outputPath } = await transcribeAudio(audioPath);
-      transcriptPath = outputPath;
-      await replyWithTranscript(ctx, text, ctx.message?.message_id);
-      if (!text) {
-        await ctx.reply("I couldn't transcribe the audio.");
-        return;
-      }
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'user',
-        kind: 'audio',
-        text,
-      });
-      const response = await runAgentForChat(chatId, text, { topicId });
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'assistant',
-        kind: 'text',
-        text: extractMemoryText(response),
-      });
-      await replyWithResponse(ctx, response);
-    } catch (err) {
-      console.error(err);
-      if (err && err.code === 'ENOENT') {
-        await replyWithError(
-          ctx,
-          "I can't find parakeet-mlx. Install it and try again.",
-          err,
-        );
-      } else {
-        await replyWithError(ctx, 'Error processing audio.', err);
-      }
-    } finally {
-      stopTyping();
-      await safeUnlink(audioPath);
-      await safeUnlink(transcriptPath);
-    }
-  });
-});
-
-bot.on(['photo', 'document'], (ctx, next) => {
-  const chatId = ctx.chat.id;
-  const topicId = getTopicId(ctx);
-  const topicKey = buildTopicKey(chatId, topicId);
-  const payload = getImagePayload(ctx.message);
-  if (!payload) return next();
-
-  enqueue(topicKey, async () => {
-    const stopTyping = startTyping(ctx);
-    const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
-    const memoryThreadKey = buildMemoryThreadKey(
-      chatId,
-      topicId,
-      effectiveAgentId
-    );
-    let imagePath;
-    try {
-      imagePath = await downloadTelegramFile(ctx, payload, {
-        dir: IMAGE_DIR,
-        prefix: 'image',
-        errorLabel: 'image',
-      });
-      const caption = (ctx.message.caption || '').trim();
-      const prompt = caption || 'User sent an image.';
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'user',
-        kind: 'image',
-        text: prompt,
-      });
-      const response = await runAgentForChat(chatId, prompt, {
-        topicId,
-        imagePaths: [imagePath],
-      });
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'assistant',
-        kind: 'text',
-        text: extractMemoryText(response),
-      });
-      await replyWithResponse(ctx, response);
-    } catch (err) {
-      console.error(err);
-      await replyWithError(ctx, 'Error processing image.', err);
-    } finally {
-      stopTyping();
-    }
-  });
-});
-
-bot.on('document', (ctx) => {
-  const chatId = ctx.chat.id;
-  const topicId = getTopicId(ctx);
-  const topicKey = buildTopicKey(chatId, topicId);
-  if (getAudioPayload(ctx.message) || getImagePayload(ctx.message)) return;
-  const payload = getDocumentPayload(ctx.message);
-  if (!payload) return;
-
-  enqueue(topicKey, async () => {
-    const stopTyping = startTyping(ctx);
-    const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
-    const memoryThreadKey = buildMemoryThreadKey(
-      chatId,
-      topicId,
-      effectiveAgentId
-    );
-    let documentPath;
-    try {
-      documentPath = await downloadTelegramFile(ctx, payload, {
-        dir: DOCUMENT_DIR,
-        prefix: 'document',
-        errorLabel: 'document',
-      });
-      const caption = (ctx.message.caption || '').trim();
-      const prompt = caption || 'User sent a document.';
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'user',
-        kind: 'document',
-        text: prompt,
-      });
-      const response = await runAgentForChat(chatId, prompt, {
-        topicId,
-        documentPaths: [documentPath],
-      });
-      await captureMemoryEvent({
-        threadKey: memoryThreadKey,
-        chatId,
-        topicId,
-        agentId: effectiveAgentId,
-        role: 'assistant',
-        kind: 'text',
-        text: extractMemoryText(response),
-      });
-      await replyWithResponse(ctx, response);
-    } catch (err) {
-      console.error(err);
-      await replyWithError(ctx, 'Error processing document.', err);
-    } finally {
-      stopTyping();
-    }
-  });
+registerHandlers({
+  bot,
+  buildMemoryThreadKey,
+  buildTopicKey,
+  captureMemoryEvent,
+  consumeScriptContext,
+  documentDir: DOCUMENT_DIR,
+  downloadTelegramFile,
+  enqueue,
+  extractMemoryText,
+  formatScriptContext,
+  getAudioPayload,
+  getDocumentPayload,
+  getImagePayload,
+  getTopicId,
+  imageDir: IMAGE_DIR,
+  lastScriptOutputs,
+  parseSlashCommand,
+  replyWithError,
+  replyWithResponse,
+  replyWithTranscript,
+  resolveEffectiveAgentId,
+  runAgentForChat,
+  runScriptCommand,
+  safeUnlink,
+  scriptManager,
+  startTyping,
+  transcribeAudio,
 });
 
 async function handleCronTrigger(chatId, prompt, options = {}) {
