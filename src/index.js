@@ -1,7 +1,6 @@
 require('dotenv').config();
 
 const { Telegraf } = require('telegraf');
-const { execFile } = require('child_process');
 const { randomUUID } = require('crypto');
 const { constants: fsConstants } = require('fs');
 const fs = require('fs/promises');
@@ -86,30 +85,31 @@ const {
 
 const { ScriptManager } = require('./script-manager');
 const { prefixTextWithTimestamp, DEFAULT_TIME_ZONE } = require('./time-utils');
-
-function formatLogTimestamp(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0');
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  const hour = pad(date.getHours());
-  const minute = pad(date.getMinutes());
-  const second = pad(date.getSeconds());
-  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
-}
-
-function installLogTimestamps() {
-  const levels = ['log', 'info', 'warn', 'error'];
-  const original = {};
-  for (const level of levels) {
-    original[level] = console[level].bind(console);
-  }
-  for (const level of levels) {
-    console[level] = (...args) => {
-      original[level](`[${formatLogTimestamp()}]`, ...args);
-    };
-  }
-}
+const { installLogTimestamps } = require('./app/logging');
+const {
+  AGENT_MAX_BUFFER,
+  AGENT_TIMEOUT_MS,
+  DOCUMENT_CLEANUP_INTERVAL_MS,
+  DOCUMENT_DIR,
+  DOCUMENT_TTL_HOURS,
+  FILE_INSTRUCTIONS_EVERY,
+  IMAGE_CLEANUP_INTERVAL_MS,
+  IMAGE_DIR,
+  IMAGE_TTL_HOURS,
+  MEMORY_CURATE_EVERY,
+  MEMORY_RETRIEVAL_LIMIT,
+  SCRIPT_NAME_REGEX,
+  SCRIPTS_DIR,
+  SCRIPT_TIMEOUT_MS,
+  SHUTDOWN_DRAIN_TIMEOUT_MS,
+  WHISPER_CMD,
+  WHISPER_LANGUAGE,
+  WHISPER_MODEL,
+  WHISPER_TIMEOUT_MS,
+} = require('./app/env');
+const { createAppState } = require('./app/state');
+const { execLocal, shellQuote, wrapCommandWithPty } = require('./services/process');
+const { createEnqueue } = require('./services/queue');
 
 installLogTimestamps();
 
@@ -118,53 +118,6 @@ if (!BOT_TOKEN) {
   console.error('Missing TELEGRAM_BOT_TOKEN');
   process.exit(1);
 }
-
-
-const WHISPER_CMD = 'mlx_whisper';
-const WHISPER_TIMEOUT_MS = 300000;
-const WHISPER_MODEL = 'mlx-community/whisper-large-v3-turbo';
-const WHISPER_LANGUAGE = 'es';
-
-const IMAGE_DIR = path.resolve(path.join(os.tmpdir(), 'aipal', 'images'));
-const IMAGE_TTL_HOURS = 24;
-const IMAGE_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
-
-const DOCUMENT_DIR = path.resolve(path.join(os.tmpdir(), 'aipal', 'documents'));
-const DOCUMENT_TTL_HOURS = 24;
-const DOCUMENT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
-
-const SCRIPTS_DIR =
-  process.env.AIPAL_SCRIPTS_DIR ||
-  path.join(os.homedir(), '.config', 'aipal', 'scripts');
-const SCRIPT_TIMEOUT_MS = readNumberEnv(
-  process.env.AIPAL_SCRIPT_TIMEOUT_MS,
-  120000
-);
-const AGENT_TIMEOUT_MS = readNumberEnv(
-  process.env.AIPAL_AGENT_TIMEOUT_MS,
-  600000
-);
-const AGENT_MAX_BUFFER = readNumberEnv(
-  process.env.AIPAL_AGENT_MAX_BUFFER,
-  10 * 1024 * 1024
-);
-const FILE_INSTRUCTIONS_EVERY = readNumberEnv(
-  process.env.AIPAL_FILE_INSTRUCTIONS_EVERY,
-  10
-);
-const MEMORY_CURATE_EVERY = readNumberEnv(
-  process.env.AIPAL_MEMORY_CURATE_EVERY,
-  20
-);
-const MEMORY_RETRIEVAL_LIMIT = readNumberEnv(
-  process.env.AIPAL_MEMORY_RETRIEVAL_LIMIT,
-  8
-);
-const SHUTDOWN_DRAIN_TIMEOUT_MS = readNumberEnv(
-  process.env.AIPAL_SHUTDOWN_DRAIN_TIMEOUT_MS,
-  120000
-);
-const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
 const bot = new Telegraf(BOT_TOKEN);
 const allowedUsers = parseAllowedUsersEnv(process.env.ALLOWED_USERS);
@@ -189,20 +142,16 @@ if (allowedUsers.size > 0) {
   );
 }
 
-const queues = new Map();
-let threads = new Map();
-let threadsPersist = Promise.resolve();
-let agentOverrides = new Map();
-let agentOverridesPersist = Promise.resolve();
-let memoryPersist = Promise.resolve();
-const threadTurns = new Map();
-const lastScriptOutputs = new Map();
+const appState = createAppState({ defaultAgent: AGENT_CODEX });
+const { queues, threadTurns, lastScriptOutputs } = appState;
+let { threads, threadsPersist, agentOverrides, agentOverridesPersist, memoryPersist } = appState;
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let memoryEventsSinceCurate = 0;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
 let globalModels = {};
 let cronDefaultChatId = null;
+const enqueue = createEnqueue(queues);
 
 const scriptManager = new ScriptManager(SCRIPTS_DIR);
 
@@ -329,12 +278,6 @@ bot.catch((err) => {
   console.error('Bot error', err);
 });
 
-function readNumberEnv(raw, fallback) {
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) return fallback;
-  return value;
-}
-
 function persistThreads() {
   threadsPersist = threadsPersist
     .catch(() => {})
@@ -448,37 +391,6 @@ async function hydrateGlobalSettings() {
   if (config.agent) globalAgent = normalizeAgent(config.agent);
   if (config.models) globalModels = { ...config.models };
   return config;
-}
-
-function shellQuote(value) {
-  const escaped = String(value).replace(/'/g, String.raw`'\''`);
-  return `'${escaped}'`;
-}
-
-function wrapCommandWithPty(command) {
-  const python = 'import pty,sys; pty.spawn(["bash","-lc", sys.argv[1]])';
-  return `python3 -c ${shellQuote(python)} ${shellQuote(command)}`;
-}
-
-function execLocal(cmd, args, options = {}) {
-  const { timeout, maxBuffer, ...rest } = options;
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { encoding: 'utf8', timeout, maxBuffer, ...rest }, (err, stdout, stderr) => {
-      if (err) {
-        err.stderr = stderr;
-        err.stdout = stdout;
-        if (timeout && err.killed) {
-          const timeoutErr = new Error(`Command timed out after ${timeout}ms`);
-          timeoutErr.code = 'ETIMEDOUT';
-          timeoutErr.stderr = stderr;
-          timeoutErr.stdout = stdout;
-          return reject(timeoutErr);
-        }
-        return reject(err);
-      }
-      resolve(stdout || '');
-    });
-  });
 }
 
 function splitArgs(input) {
@@ -949,20 +861,6 @@ async function replyWithTranscript(ctx, transcript, replyToMessageId) {
     const prefix = i === 0 ? `${header}\n` : '';
     await ctx.reply(`${prefix}${chunks[i]}`, replyOptions);
   }
-}
-
-function enqueue(queueKey, fn) {
-  const prev = queues.get(queueKey) || Promise.resolve();
-  const next = prev.then(fn).catch((err) => {
-    console.error('Queue error', err);
-  });
-  queues.set(queueKey, next);
-  next.finally(() => {
-    if (queues.get(queueKey) === next) {
-      queues.delete(queueKey);
-    }
-  });
-  return next;
 }
 
 bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`));
