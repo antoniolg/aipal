@@ -69,21 +69,44 @@ test('parseAgentOutput falls back to last codex message when no channel exists',
 
 test('buildAgentCommand builds claude headless command with resume', () => {
   const agent = getAgent('claude');
-  const command = agent.buildCommand({ prompt: 'hello', threadId: 'session-1' });
+  const command = agent.buildCommand({
+    prompt: 'hello',
+    threadId: '550e8400-e29b-41d4-a716-446655440000',
+  });
   assert.match(command, /^claude /);
   assert.match(command, /-p 'hello'/);
   assert.match(command, /--output-format json/);
   assert.match(command, /--dangerously-skip-permissions/);
-  assert.match(command, /--resume 'session-1'/);
+  assert.match(command, /--resume '550e8400-e29b-41d4-a716-446655440000'/);
 });
 
 test('parseAgentOutput extracts claude session and result', () => {
   const agent = getAgent('claude');
-  const output = JSON.stringify({ result: 'hola', session_id: 'session-2' });
+  const output = JSON.stringify({
+    result: 'hola',
+    session_id: '550e8400-e29b-41d4-a716-446655440000',
+  });
   const parsed = agent.parseOutput(output);
-  assert.equal(parsed.threadId, 'session-2');
+  assert.equal(parsed.threadId, '550e8400-e29b-41d4-a716-446655440000');
   assert.equal(parsed.text, 'hola');
   assert.equal(parsed.sawJson, true);
+});
+
+test('buildAgentCommand omits claude resume when thread id is invalid', () => {
+  const agent = getAgent('claude');
+  const command = agent.buildCommand({ prompt: 'hello', threadId: 'not-a-uuid' });
+  assert.doesNotMatch(command, /--resume/);
+});
+
+test('parseAgentOutput sanitizes claude session id with trailing quote/backslash', () => {
+  const agent = getAgent('claude');
+  const output = JSON.stringify({
+    result: 'ok',
+    session_id: '82a2961c-919a-4ac2-bcb5-fcb341ef32db\\"',
+  });
+  const parsed = agent.parseOutput(output);
+  assert.equal(parsed.threadId, '82a2961c-919a-4ac2-bcb5-fcb341ef32db');
+  assert.equal(parsed.text, 'ok');
 });
 
 test('buildAgentCommand builds gemini headless command', () => {
@@ -150,4 +173,3 @@ test('listModelsCommand builds opencode models command', () => {
   const command = agent.listModelsCommand();
   assert.match(command, /opencode models/);
 });
-

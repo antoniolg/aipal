@@ -2,6 +2,8 @@ const { shellQuote, resolvePromptValue } = require('./utils');
 
 const CLAUDE_CMD = 'claude';
 const CLAUDE_OUTPUT_FORMAT = 'json';
+const CLAUDE_SESSION_ID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function safeJsonParse(value) {
   try {
@@ -12,7 +14,21 @@ function safeJsonParse(value) {
 }
 
 function stripAnsi(value) {
-  return String(value || '').replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+  return String(value || '')
+    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, '');
+}
+
+function sanitizeSessionId(value) {
+  if (value === undefined || value === null) return undefined;
+  const cleaned = String(value)
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .trim()
+    .replace(/^['"]+/, '')
+    .replace(/['"\\]+$/, '')
+    .trim();
+  if (!CLAUDE_SESSION_ID_REGEX.test(cleaned)) return undefined;
+  return cleaned;
 }
 
 function buildCommand({ prompt, promptExpression, threadId }) {
@@ -24,8 +40,9 @@ function buildCommand({ prompt, promptExpression, threadId }) {
     CLAUDE_OUTPUT_FORMAT,
     '--dangerously-skip-permissions',
   ];
-  if (threadId) {
-    args.push('--resume', shellQuote(threadId));
+  const safeThreadId = sanitizeSessionId(threadId);
+  if (safeThreadId) {
+    args.push('--resume', shellQuote(safeThreadId));
   }
   return `${CLAUDE_CMD} ${args.join(' ')}`.trim();
 }
@@ -46,12 +63,13 @@ function parseOutput(output) {
   if (!payload || typeof payload !== 'object') {
     return { text: trimmed, threadId: undefined, sawJson: false };
   }
-  const threadId =
+  const threadId = sanitizeSessionId(
     payload.session_id ||
-    payload.sessionId ||
-    payload.conversation_id ||
-    payload.conversationId ||
-    undefined;
+      payload.sessionId ||
+      payload.conversation_id ||
+      payload.conversationId ||
+      undefined
+  );
   let text = payload.result;
   if (typeof text !== 'string') {
     text = payload.text;

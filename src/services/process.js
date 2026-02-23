@@ -1,7 +1,7 @@
 const { execFile } = require('child_process');
 
 function shellQuote(value) {
-  const escaped = String(value).replace(/'/g, String.raw`'\\''`);
+  const escaped = String(value).replace(/'/g, String.raw`'\''`);
   return `'${escaped}'`;
 }
 
