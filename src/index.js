@@ -101,6 +101,8 @@ const {
   WHISPER_LANGUAGE,
   WHISPER_MODEL,
   WHISPER_TIMEOUT_MS,
+  HTTP_PORT,
+  HTTP_AUTH_TOKEN,
 } = require('./app/env');
 const { createAppState } = require('./app/state');
 const { execLocal, shellQuote, wrapCommandWithPty } = require('./services/process');
@@ -111,6 +113,7 @@ const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
+const { createHttpServerService } = require('./services/http-server');
 const { bootstrapApp } = require('./app/bootstrap');
 const { initializeApp, installShutdownHooks } = require('./app/lifecycle');
 const { registerCommands } = require('./app/register-commands');
@@ -134,8 +137,7 @@ if (allowedUsers.size > 0) {
     createAccessControlMiddleware(allowedUsers, {
       onUnauthorized: ({ userId, username }) => {
         console.warn(
-          `Unauthorized access attempt from user ID ${userId} (${
-            username || 'no username'
+          `Unauthorized access attempt from user ID ${userId} (${username || 'no username'
           })`
         );
       },
@@ -265,6 +267,27 @@ const {
   startTyping,
 } = telegramReplyService;
 
+const httpServerService = createHttpServerService({
+  port: HTTP_PORT,
+  authToken: HTTP_AUTH_TOKEN,
+  onMessageReceived: async (payload) => {
+    const targetChatId =
+      payload.chatId ||
+      cronDefaultChatId ||
+      (allowedUsers.size > 0 ? Array.from(allowedUsers)[0] : null);
+
+    if (!targetChatId) {
+      throw new Error(
+        'No target chatId configured (need either payload.chatId, cronChatId config, or ALLOWED_USERS array)'
+      );
+    }
+
+    await sendResponseToChat(targetChatId, payload.text, {
+      topicId: payload.topicId,
+    });
+  },
+});
+
 const handleCronTrigger = createCronHandler({
   bot,
   buildMemoryThreadKey,
@@ -281,21 +304,21 @@ bot.catch((err) => {
 
 function persistThreads() {
   threadsPersist = threadsPersist
-    .catch(() => {})
+    .catch(() => { })
     .then(() => saveThreads(threads));
   return threadsPersist;
 }
 
 function persistAgentOverrides() {
   agentOverridesPersist = agentOverridesPersist
-    .catch(() => {})
+    .catch(() => { })
     .then(() => saveAgentOverrides(agentOverrides));
   return agentOverridesPersist;
 }
 
 function persistMemory(task) {
   memoryPersist = memoryPersist
-    .catch(() => {})
+    .catch(() => { })
     .then(task);
   return memoryPersist;
 }
@@ -443,6 +466,7 @@ bootstrapApp({
       startCronScheduler,
       startDocumentCleanup,
       startImageCleanup,
+      startHttpServer: httpServerService.start,
     }),
   installShutdownHooks: () =>
     installShutdownHooks({
@@ -451,5 +475,6 @@ bootstrapApp({
       getPersistPromises: () => [threadsPersist, agentOverridesPersist, memoryPersist],
       getQueues: () => queues,
       shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+      stopHttpServer: httpServerService.stop,
     }),
 });

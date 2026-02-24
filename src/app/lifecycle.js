@@ -11,10 +11,15 @@ function initializeApp(options) {
     startCronScheduler,
     startDocumentCleanup,
     startImageCleanup,
+    startHttpServer,
   } = options;
 
   startImageCleanup();
   startDocumentCleanup();
+
+  if (startHttpServer) {
+    startHttpServer();
+  }
 
   loadThreads()
     .then((loaded) => {
@@ -55,6 +60,7 @@ function installShutdownHooks(options) {
     getPersistPromises,
     getQueues,
     shutdownDrainTimeoutMs,
+    stopHttpServer,
   } = options;
 
   let shutdownStarted = false;
@@ -71,6 +77,14 @@ function installShutdownHooks(options) {
       }
     } catch (err) {
       console.warn('Failed to stop cron scheduler:', err);
+    }
+
+    try {
+      if (stopHttpServer) {
+        stopHttpServer().catch((err) => console.warn('Failed to stop HTTP server:', err));
+      }
+    } catch (err) {
+      console.warn('Failed to trigger HTTP server stop:', err);
     }
 
     try {

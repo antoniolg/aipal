@@ -53,6 +53,9 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = readNumberEnv(
 );
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
+const HTTP_PORT = readNumberEnv(process.env.HTTP_PORT, 3000);
+const HTTP_AUTH_TOKEN = process.env.HTTP_AUTH_TOKEN || '';
+
 module.exports = {
   AGENT_MAX_BUFFER,
   AGENT_TIMEOUT_MS,
@@ -60,6 +63,8 @@ module.exports = {
   DOCUMENT_DIR,
   DOCUMENT_TTL_HOURS,
   FILE_INSTRUCTIONS_EVERY,
+  HTTP_AUTH_TOKEN,
+  HTTP_PORT,
   IMAGE_CLEANUP_INTERVAL_MS,
   IMAGE_DIR,
   IMAGE_TTL_HOURS,
