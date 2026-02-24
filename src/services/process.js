@@ -1,4 +1,4 @@
-const { execFile } = require('child_process');
+const cp = require('child_process');
 
 function shellQuote(value) {
   const escaped = String(value).replace(/'/g, String.raw`'\''`);
@@ -13,7 +13,7 @@ function wrapCommandWithPty(command) {
 function execLocal(cmd, args, options = {}) {
   const { timeout, maxBuffer, ...rest } = options;
   return new Promise((resolve, reject) => {
-    execFile(
+    cp.execFile(
       cmd,
       args,
       { encoding: 'utf8', timeout, maxBuffer, ...rest },
