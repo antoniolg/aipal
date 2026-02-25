@@ -205,9 +205,9 @@ function buildSessionMenuEntries(sessions) {
   const used = new Set();
   return sessions.map((session, index) => {
     const when = formatShortWhen(session.timestamp);
-    const base = when
-      ? `${index + 1}. ${shortSessionId(session.id)} · ${when}`
-      : `${index + 1}. ${shortSessionId(session.id)}`;
+    const rawName = String(session?.displayName || '').trim();
+    const baseName = rawName || `Sesión ${index + 1}`;
+    const base = when ? `${baseName} · ${when}` : baseName;
     return {
       label: uniqueMenuLabel(base, used),
       session,
@@ -577,9 +577,23 @@ function registerSettingsCommands(options) {
       return;
     }
 
+    const cwd = String(project?.cwd || '').trim();
+    if (!cwd) {
+      await ctx.reply('No pude resolver el proyecto seleccionado.');
+      return;
+    }
+    setGlobalAgentCwd(cwd);
+    try {
+      await updateConfig({ agentCwd: cwd });
+    } catch (err) {
+      console.error(err);
+      await replyWithError(ctx, 'No pude guardar el proyecto activo.', err);
+      return;
+    }
+
     const sessions = await listLocalCodexSessions({
       limit: MENU_SEARCH_MAX_RESULTS,
-      cwd: project.cwd,
+      cwd,
     });
     const sessionEntries = buildSessionMenuEntries(sessions);
     const key = menuNavKeyFromIds(chatId, topicId);

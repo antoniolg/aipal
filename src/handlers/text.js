@@ -40,6 +40,7 @@ function registerTextHandler(options) {
           'reset',
           'cron',
           'help',
+          'menu',
           'document_scripts',
         ].includes(normalized)
       ) {

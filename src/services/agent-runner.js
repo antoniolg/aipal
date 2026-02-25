@@ -24,7 +24,14 @@ function createAgentRunner(options) {
     threadTurns,
     wrapCommandWithPty,
     defaultTimeZone,
+    getAgentCwd,
   } = options;
+
+  function buildExecOptions(base = {}) {
+    const cwd = typeof getAgentCwd === 'function' ? getAgentCwd() : undefined;
+    if (!cwd) return base;
+    return { ...base, cwd };
+  }
 
   async function runAgentOneShot(prompt) {
     const globalAgent = getGlobalAgent();
@@ -65,6 +72,7 @@ function createAgentRunner(options) {
     let execError;
     try {
       output = await execLocal('bash', ['-lc', commandToRun], {
+        ...buildExecOptions(),
         timeout: agentTimeoutMs,
         maxBuffer: agentMaxBuffer,
       });
@@ -184,6 +192,7 @@ function createAgentRunner(options) {
     let execError;
     try {
       output = await execLocal('bash', ['-lc', commandToRun], {
+        ...buildExecOptions(),
         timeout: agentTimeoutMs,
         maxBuffer: agentMaxBuffer,
       });
@@ -220,6 +229,7 @@ function createAgentRunner(options) {
           listCommandToRun = `${listCommandToRun} 2>&1`;
         }
         const listOutput = await execLocal('bash', ['-lc', listCommandToRun], {
+          ...buildExecOptions(),
           timeout: agentTimeoutMs,
           maxBuffer: agentMaxBuffer,
         });
