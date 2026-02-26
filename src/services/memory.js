@@ -2,20 +2,16 @@ function createMemoryService(options) {
   const {
     appendMemoryEvent,
     buildThreadBootstrap,
-    configPath,
     curateMemory,
     documentDir,
     extractDocumentTokens,
     extractImageTokens,
     imageDir,
     memoryCurateEvery,
-    memoryPath,
     persistMemory,
     readMemory,
     readSoul,
     readTools,
-    soulPath,
-    toolsPath,
     getMemoryEventsSinceCurate,
     setMemoryEventsSinceCurate,
   } = options;
@@ -60,13 +56,12 @@ function createMemoryService(options) {
     const soul = await readSoul();
     const tools = await readTools();
     const memory = await readMemory();
-    const lines = [
-      'Bootstrap config:',
-      `Config JSON: ${configPath}`,
-      `Soul file: ${soulPath}`,
-      `Tools file: ${toolsPath}`,
-      `Memory file: ${memoryPath}`,
-    ];
+    const lines = ['Bootstrap config:'];
+    lines.push(
+      `Context files: soul=${soul.exists ? 'present' : 'missing'}, tools=${
+        tools.exists ? 'present' : 'missing'
+      }, memory=${memory.exists ? 'present' : 'missing'}`
+    );
     if (soul.exists && soul.content) {
       lines.push('Soul (soul.md):');
       lines.push(soul.content);

@@ -82,6 +82,7 @@ const { ScriptManager } = require('./script-manager');
 const { prefixTextWithTimestamp, DEFAULT_TIME_ZONE } = require('./time-utils');
 const { installLogTimestamps } = require('./app/logging');
 const {
+  AGENT_CWD,
   AGENT_MAX_BUFFER,
   AGENT_TIMEOUT_MS,
   DOCUMENT_CLEANUP_INTERVAL_MS,
@@ -106,6 +107,11 @@ const { createAppState } = require('./app/state');
 const { execLocal, shellQuote, wrapCommandWithPty } = require('./services/process');
 const { createEnqueue } = require('./services/queue');
 const { createAgentRunner } = require('./services/agent-runner');
+const {
+  getLocalCodexSessionLastMessage,
+  isValidSessionId,
+  listLocalCodexSessions,
+} = require('./services/codex-sessions');
 const { createCronHandler } = require('./services/cron-handler');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
@@ -115,6 +121,7 @@ const { bootstrapApp } = require('./app/bootstrap');
 const { initializeApp, installShutdownHooks } = require('./app/lifecycle');
 const { registerCommands } = require('./app/register-commands');
 const { registerHandlers } = require('./app/register-handlers');
+const { buildMainMenuKeyboard } = require('./commands/menu-keyboard');
 
 installLogTimestamps();
 
@@ -155,6 +162,7 @@ let memoryEventsSinceCurate = 0;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
 let globalModels = {};
+let globalAgentCwd = AGENT_CWD;
 let cronDefaultChatId = null;
 const enqueue = createEnqueue(queues);
 
@@ -231,6 +239,7 @@ const agentRunner = createAgentRunner({
   getGlobalAgent: () => globalAgent,
   getGlobalModels: () => globalModels,
   getGlobalThinking: () => globalThinking,
+  getAgentCwd: () => globalAgentCwd,
   getThreads: () => threads,
   imageDir: IMAGE_DIR,
   memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
@@ -318,6 +327,9 @@ async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.agent) globalAgent = normalizeAgent(config.agent);
   if (config.models) globalModels = { ...config.models };
+  if (typeof config.agentCwd === 'string' && config.agentCwd.trim()) {
+    globalAgentCwd = config.agentCwd;
+  }
   return config;
 }
 
@@ -325,7 +337,19 @@ function getTopicId(ctx) {
   return ctx?.message?.message_thread_id;
 }
 
-bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`));
+function setThreadForAgent(chatId, topicId, agentId, threadId) {
+  const key = buildThreadKey(chatId, normalizeTopicId(topicId), agentId);
+  threads.set(key, String(threadId || '').trim());
+}
+
+bot.start(async (ctx) => {
+  await ctx.reply(
+    `Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`,
+    {
+      reply_markup: buildMainMenuKeyboard(),
+    }
+  );
+});
 registerCommands({
   allowedUsers,
   bot,
@@ -348,15 +372,20 @@ registerCommands({
   getCronDefaultChatId: () => cronDefaultChatId,
   getCronScheduler: () => cronScheduler,
   getGlobalAgent: () => globalAgent,
+  getGlobalAgentCwd: () => globalAgentCwd,
   getGlobalModels: () => globalModels,
   getGlobalThinking: () => globalThinking,
+  getThreads: () => threads,
   getMemoryStatus,
   getThreadTail,
   getTopicId,
   handleCronTrigger,
   isKnownAgent,
+  getLocalCodexSessionLastMessage,
+  isValidSessionId,
   isModelResetCommand,
   loadCronJobs,
+  listLocalCodexSessions,
   markdownToTelegramHtml,
   memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
   normalizeAgent,
@@ -365,6 +394,7 @@ registerCommands({
   persistMemory,
   persistThreads,
   replyWithError,
+  resolveThreadId,
   resolveEffectiveAgentId,
   saveCronJobs,
   scriptManager,
@@ -373,6 +403,9 @@ registerCommands({
     setAgentOverride(agentOverrides, chatId, topicId, agentId),
   setGlobalAgent: (value) => {
     globalAgent = value;
+  },
+  setGlobalAgentCwd: (value) => {
+    globalAgentCwd = String(value || '').trim();
   },
   setGlobalModels: (value) => {
     globalModels = value;
@@ -383,6 +416,7 @@ registerCommands({
   setMemoryEventsSinceCurate: (value) => {
     memoryEventsSinceCurate = value;
   },
+  setThreadForAgent,
   startTyping,
   threadTurns,
   updateConfig,

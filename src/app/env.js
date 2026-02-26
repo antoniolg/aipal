@@ -7,7 +7,7 @@ function readNumberEnv(raw, fallback) {
   return value;
 }
 
-const WHISPER_CMD = 'mlx_whisper';
+const WHISPER_CMD = process.env.AIPAL_WHISPER_CMD || 'parakeet-mlx';
 const WHISPER_TIMEOUT_MS = 300000;
 const WHISPER_MODEL = 'mlx-community/whisper-large-v3-turbo';
 const WHISPER_LANGUAGE = 'es';
@@ -35,6 +35,9 @@ const AGENT_MAX_BUFFER = readNumberEnv(
   process.env.AIPAL_AGENT_MAX_BUFFER,
   10 * 1024 * 1024
 );
+const AGENT_CWD = process.env.AIPAL_AGENT_CWD
+  ? path.resolve(process.env.AIPAL_AGENT_CWD)
+  : '';
 const FILE_INSTRUCTIONS_EVERY = readNumberEnv(
   process.env.AIPAL_FILE_INSTRUCTIONS_EVERY,
   10
@@ -56,6 +59,7 @@ const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 module.exports = {
   AGENT_MAX_BUFFER,
   AGENT_TIMEOUT_MS,
+  AGENT_CWD,
   DOCUMENT_CLEANUP_INTERVAL_MS,
   DOCUMENT_DIR,
   DOCUMENT_TTL_HOURS,

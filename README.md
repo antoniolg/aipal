@@ -49,6 +49,10 @@ Open Telegram, send `/start`, then any message.
 - `/agent default`: clear agent override for the current topic and return to global agent
 - `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id|reset]`: view/set/reset the model for the current agent (persisted in `config.json`)
+- `/project [path|reset]`: set/reset the working directory used by the agent process
+- `/projects [n]`: list local Codex projects and choose between starting a new conversation or attaching the latest session for that project
+- `/sessions [n]`: list recent local Codex sessions (filtered by `/project` if set)
+- `/session <id>`: attach a local Codex session to the current chat/topic
 - `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
 - `/cron [list|reload|chatid|assign|unassign|run <jobId>]`: manage cron jobs (see below)
 - `/help`: list available commands and scripts
@@ -108,9 +112,13 @@ The only required environment variable is `TELEGRAM_BOT_TOKEN` in `.env`.
 Optional:
 - `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aipal/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
+- `AIPAL_AGENT_CWD`: project directory used as working directory for agent commands
+- `AIPAL_WHISPER_CMD`: command used for audio transcription (default: `parakeet-mlx`)
+- `AIPAL_DROP_PENDING_UPDATES`: if not `false`, ignores queued Telegram updates on startup (default: `true`; recommended explicitly as `true` in production)
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N captured events (default: 20)
 - `AIPAL_MEMORY_RETRIEVAL_LIMIT`: max retrieved memory lines injected per request (default: 8)
 - `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
+  - Required for sensitive session/project commands (`/menu`, `/project`, `/projects`, `/sessions`, `/session`).
 
 ## Config file (optional)
 The bot stores `/agent` in a JSON file at:
@@ -156,7 +164,7 @@ To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of T
 - Images are downloaded into the image folder and included in the prompt
 
 ## Troubleshooting
-- `ENOENT parakeet-mlx`: install `parakeet-mlx` and ensure it is on PATH.
+- `ENOENT` when transcribing audio: install `parakeet-mlx` and ensure it is on PATH, or set `AIPAL_WHISPER_CMD` to your command.
 - `Error processing response.`: check that `codex` is installed and accessible on PATH.
 - Telegram `ECONNRESET`: usually transient network, retry.
 
