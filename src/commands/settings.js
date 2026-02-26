@@ -1,33 +1,35 @@
 const fs = require('fs/promises');
 const path = require('path');
+const { buildMainMenuKeyboard } = require('./menu-keyboard');
 
 const SESSION_LIMIT_DEFAULT = 10;
 const SESSION_LIMIT_MAX = 30;
 const PROJECT_LIMIT_DEFAULT = 12;
 const PROJECT_LIMIT_MAX = 20;
-const PROJECT_PICKER_TTL_MS = 30 * 60 * 1000;
-const MENU_PICKER_TTL_MS = 30 * 60 * 1000;
-const MENU_SESSION_LIST_LIMIT = 12;
-const MENU_SESSION_NAV_LIMIT = 3;
 const MENU_NAV_TTL_MS = 30 * 60 * 1000;
 const MENU_PROJECT_PAGE_SIZE = 8;
 const MENU_SESSION_PAGE_SIZE = 6;
 const MENU_SEARCH_MAX_RESULTS = 200;
 
-const MENU_BTN_PROJECT = 'Project';
-const MENU_BTN_SESSIONS = 'Sesiones';
-const MENU_BTN_RESUME_LAST = 'Reanudar última';
 const MENU_BTN_SEARCH = 'Buscar';
 const MENU_BTN_PREV = 'Anterior';
 const MENU_BTN_NEXT = 'Siguiente';
 const MENU_BTN_BACK = 'Volver';
 const MENU_BTN_NEW_SESSION = 'Nueva sesión';
-const MENU_BTN_HIDE_KEYBOARD = 'Ocultar teclado';
-
-const projectPickerCache = new Map();
-const menuProjectCache = new Map();
-const menuSessionCache = new Map();
+const MENU_EXPIRED_MESSAGE = 'Este menú expiró o fue reemplazado. Usa /menu.';
 const menuNavCache = new Map();
+const RESERVED_MENU_LABELS = new Set([
+  'projects',
+  'project',
+  'sesiones',
+  'reanudar última',
+  'ocultar teclado',
+  'buscar',
+  'anterior',
+  'siguiente',
+  'volver',
+  'nueva sesión',
+]);
 
 function parseSessionLimit(value) {
   const parsed = Number.parseInt(String(value || SESSION_LIMIT_DEFAULT), 10);
@@ -47,15 +49,24 @@ function shortSessionId(value) {
   return `${id.slice(0, 8)}...${id.slice(-4)}`;
 }
 
-function formatSessionLine(session) {
-  const when = String(session.timestamp || '').replace('T', ' ').replace('Z', '');
-  return `- ${sessionDisplayLabel(session)} | ${when}`;
-}
-
 function sanitizeButtonText(value, max = 60) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max - 3)}...`;
+}
+
+function normalizeMenuText(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function createMenuInstanceId() {
+  const nowPart = Date.now().toString(36).slice(-4);
+  const randPart = Math.random().toString(36).slice(2, 6);
+  return `${nowPart}${randPart}`.toUpperCase();
 }
 
 function sessionDisplayLabel(session) {
@@ -65,36 +76,10 @@ function sessionDisplayLabel(session) {
   return `${project} (${shortSessionId(session?.id)})`;
 }
 
-function projectDisplayLabel(project) {
-  const base = path.basename(project.cwd) || project.cwd;
-  return `${base} (${project.sessionsCount})`;
-}
-
 function projectNameFromCwd(cwd) {
   const normalized = String(cwd || '').trim();
   if (!normalized) return '(proyecto desconocido)';
   return path.basename(normalized) || normalized;
-}
-
-function buildSessionButtons(sessions) {
-  return sessions.map((session) => {
-    const label = sanitizeButtonText(sessionDisplayLabel(session));
-    return [
-      {
-        text: label,
-        callback_data: `session_attach:${session.id}`,
-      },
-    ];
-  });
-}
-
-function buildProjectButtons(token, projects) {
-  return projects.map((project, index) => [
-    {
-      text: sanitizeButtonText(projectDisplayLabel(project)),
-      callback_data: `project_open:${token}:${index}`,
-    },
-  ]);
 }
 
 function buildProjectListFromSessions(sessions) {
@@ -123,33 +108,6 @@ function buildProjectListFromSessions(sessions) {
   );
 }
 
-function cleanupProjectPickerCache() {
-  const now = Date.now();
-  for (const [key, value] of projectPickerCache.entries()) {
-    if (!value?.createdAt || now - value.createdAt > PROJECT_PICKER_TTL_MS) {
-      projectPickerCache.delete(key);
-    }
-  }
-}
-
-function cleanupMenuCaches() {
-  const now = Date.now();
-  for (const [key, value] of menuProjectCache.entries()) {
-    if (!value?.createdAt || now - value.createdAt > MENU_PICKER_TTL_MS) {
-      menuProjectCache.delete(key);
-    }
-  }
-  for (const [key, value] of menuSessionCache.entries()) {
-    if (!value?.createdAt || now - value.createdAt > MENU_PICKER_TTL_MS) {
-      menuSessionCache.delete(key);
-    }
-  }
-}
-
-function createPickerToken() {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function formatShortWhen(timestamp) {
   const raw = String(timestamp || '').trim();
   if (!raw) return '';
@@ -173,58 +131,117 @@ function cleanupMenuNavCache() {
   }
 }
 
+function resolveMenuStateForChatTopic(chatId, topicId) {
+  const exactKey = menuNavKeyFromIds(chatId, topicId);
+  const exact = menuNavCache.get(exactKey);
+  if (exact) return { key: exactKey, state: exact };
+
+  const rootKey = menuNavKeyFromIds(chatId, undefined);
+  if (rootKey !== exactKey) {
+    const root = menuNavCache.get(rootKey);
+    if (root) return { key: rootKey, state: root };
+  }
+
+  let fallbackKey = '';
+  let fallbackState = null;
+  for (const [key, value] of menuNavCache.entries()) {
+    if (!key.startsWith(`${chatId}:`)) continue;
+    if (!fallbackState || Number(value?.createdAt || 0) > Number(fallbackState?.createdAt || 0)) {
+      fallbackKey = key;
+      fallbackState = value;
+    }
+  }
+  if (fallbackState) return { key: fallbackKey, state: fallbackState };
+  return { key: exactKey, state: null };
+}
+
 function uniqueMenuLabel(base, usedLabels) {
   const trimmed = sanitizeButtonText(base, 44);
-  if (!usedLabels.has(trimmed)) {
-    usedLabels.add(trimmed);
+  const normalized = normalizeMenuText(trimmed);
+  if (!usedLabels.has(normalized) && !RESERVED_MENU_LABELS.has(normalized)) {
+    usedLabels.add(normalized);
     return trimmed;
   }
   let i = 2;
   while (true) {
     const candidate = sanitizeButtonText(`${trimmed} (${i})`, 44);
-    if (!usedLabels.has(candidate)) {
-      usedLabels.add(candidate);
+    const normalizedCandidate = normalizeMenuText(candidate);
+    if (
+      !usedLabels.has(normalizedCandidate) &&
+      !RESERVED_MENU_LABELS.has(normalizedCandidate)
+    ) {
+      usedLabels.add(normalizedCandidate);
       return candidate;
     }
     i += 1;
   }
 }
 
-function buildProjectMenuEntries(projects) {
-  const used = new Set();
-  return projects.map((project) => {
-    const name = projectNameFromCwd(project.cwd);
+function buildSelectableButtonLabel(selectKey, displayLabel, menuInstanceId = '') {
+  const key = String(selectKey || '').trim().toUpperCase();
+  const instance = String(menuInstanceId || '').trim().toUpperCase();
+  const text = String(displayLabel || '').trim();
+  if (instance) {
+    return sanitizeButtonText(`${instance} ${key} · ${text}`, 44);
+  }
+  return sanitizeButtonText(`${key} · ${text}`, 44);
+}
+
+function extractSelectPayload(value) {
+  const normalized = normalizeMenuText(value);
+  const tokenMatch = normalized.match(/^([a-z0-9]{4,8})\s+([ps]\d+)\b/);
+  if (tokenMatch) {
     return {
-      label: uniqueMenuLabel(name, used),
+      menuInstanceId: tokenMatch[1].toUpperCase(),
+      selectKey: tokenMatch[2].toUpperCase(),
+    };
+  }
+  const keyMatch = normalized.match(/^([ps]\d+)\b/);
+  if (keyMatch) {
+    return {
+      menuInstanceId: '',
+      selectKey: keyMatch[1].toUpperCase(),
+    };
+  }
+  return {
+    menuInstanceId: '',
+    selectKey: '',
+  };
+}
+
+function buildProjectMenuEntries(projects, menuInstanceId = '') {
+  const used = new Set();
+  return projects.map((project, index) => {
+    const name = projectNameFromCwd(project.cwd);
+    const label = uniqueMenuLabel(name, used);
+    const selectKey = `P${index + 1}`;
+    return {
+      label,
+      normalizedLabel: normalizeMenuText(label),
+      selectKey,
+      buttonLabel: buildSelectableButtonLabel(selectKey, label, menuInstanceId),
       project,
     };
   });
 }
 
-function buildSessionMenuEntries(sessions) {
+function buildSessionMenuEntries(sessions, menuInstanceId = '') {
   const used = new Set();
   return sessions.map((session, index) => {
     const when = formatShortWhen(session.timestamp);
     const rawName = String(session?.displayName || '').trim();
     const baseName = rawName || `Sesión ${index + 1}`;
     const base = when ? `${baseName} · ${when}` : baseName;
+    const label = uniqueMenuLabel(base, used);
+    const selectKey = `S${index + 1}`;
     return {
-      label: uniqueMenuLabel(base, used),
+      label,
+      normalizedLabel: normalizeMenuText(label),
+      selectKey,
+      buttonLabel: buildSelectableButtonLabel(selectKey, label, menuInstanceId),
       session,
     };
   });
-}
-
-function buildMainMenuKeyboard() {
-  return {
-    keyboard: [
-      [{ text: MENU_BTN_PROJECT }, { text: MENU_BTN_SESSIONS }],
-      [{ text: MENU_BTN_RESUME_LAST }],
-      [{ text: MENU_BTN_HIDE_KEYBOARD }],
-    ],
-    resize_keyboard: true,
-    is_persistent: true,
-  };
 }
 
 function getPagedEntries(entries, page, pageSize) {
@@ -249,7 +266,7 @@ function buildProjectsMenuKeyboard(projectEntries, page = 0) {
 
   return {
     keyboard: [
-      ...paged.pageEntries.map((entry) => [{ text: entry.label }]),
+      ...paged.pageEntries.map((entry) => [{ text: entry.buttonLabel || entry.label }]),
       [{ text: MENU_BTN_SEARCH }],
       ...(navRow.length ? [navRow] : []),
       [{ text: MENU_BTN_BACK }],
@@ -259,61 +276,24 @@ function buildProjectsMenuKeyboard(projectEntries, page = 0) {
   };
 }
 
-function buildSessionsMenuKeyboard(sessionEntries, page = 0) {
+function buildSessionsMenuKeyboard(sessionEntries, page = 0, canCreateNew = true) {
   const paged = getPagedEntries(sessionEntries, page, MENU_SESSION_PAGE_SIZE);
   const navRow = [];
   if (paged.page > 0) navRow.push({ text: MENU_BTN_PREV });
   if (paged.page < paged.totalPages - 1) navRow.push({ text: MENU_BTN_NEXT });
+  const actionsRows = canCreateNew ? [[{ text: MENU_BTN_NEW_SESSION }]] : [];
 
   return {
     keyboard: [
-      ...paged.pageEntries.map((entry) => [{ text: entry.label }]),
+      ...paged.pageEntries.map((entry) => [{ text: entry.buttonLabel || entry.label }]),
       [{ text: MENU_BTN_SEARCH }],
       ...(navRow.length ? [navRow] : []),
-      [{ text: MENU_BTN_NEW_SESSION }],
+      ...actionsRows,
       [{ text: MENU_BTN_BACK }],
     ],
     resize_keyboard: true,
     is_persistent: true,
   };
-}
-
-function buildMainMenuButtons() {
-  return [
-    [
-      { text: 'Proyectos', callback_data: 'menu_projects' },
-      { text: 'Sesiones', callback_data: 'menu_sessions' },
-    ],
-  ];
-}
-
-function buildPersistentKeyboard() {
-  return buildMainMenuKeyboard();
-}
-
-function buildMenuProjectButtons(token, projects) {
-  return [
-    ...projects.map((project, index) => [
-      {
-        text: sanitizeButtonText(projectDisplayLabel(project)),
-        callback_data: `menu_project:${token}:${index}`,
-      },
-    ]),
-    [{ text: 'Volver', callback_data: 'menu_main' }],
-  ];
-}
-
-function buildMenuSessionButtons(token, sessions, includeBack = true) {
-  const buttons = sessions.map((session, index) => [
-    {
-      text: sanitizeButtonText(sessionDisplayLabel(session)),
-      callback_data: `menu_session_attach:${token}:${index}`,
-    },
-  ]);
-  if (includeBack) {
-    buttons.push([{ text: 'Volver', callback_data: 'menu_main' }]);
-  }
-  return buttons;
 }
 
 function registerSettingsCommands(options) {
@@ -382,60 +362,64 @@ function registerSettingsCommands(options) {
     return getAgentOverride(chatId, topicId) || getGlobalAgent();
   }
 
-  async function replyMainMenu(ctx) {
+  function setMainMenuState(chatId, topicId) {
+    const key = menuNavKeyFromIds(chatId, topicId);
+    menuNavCache.set(key, {
+      createdAt: Date.now(),
+      menuInstanceId: createMenuInstanceId(),
+      level: 'main',
+      page: 0,
+      query: '',
+      awaitingSearch: false,
+    });
+  }
+
+  async function openMainMenu(ctx) {
     const chatId = ctx?.chat?.id || ctx?.message?.chat?.id;
     const topicId = getTopicId(ctx);
     if (chatId) {
-      const key = menuNavKeyFromIds(chatId, topicId);
-      menuNavCache.set(key, {
-        createdAt: Date.now(),
-        level: 'main',
-      });
+      setMainMenuState(chatId, topicId);
     }
     await ctx.reply('Menú principal:', {
       reply_markup: buildMainMenuKeyboard(),
     });
   }
 
-  async function showPersistentKeyboard(ctx) {
-    await ctx.reply('Atajos activados en teclado.', {
-      reply_markup: buildPersistentKeyboard(),
-    });
-  }
-
-  async function showProjectsKeyboardMenu(ctx) {
+  async function openProjectsMenu(ctx, options = {}) {
     cleanupMenuNavCache();
     const chatId = ctx?.chat?.id || ctx?.message?.chat?.id;
     const topicId = getTopicId(ctx);
     if (!chatId) return;
 
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.reply('Usa /agent codex primero.');
-      return;
-    }
-
+    const limit =
+      Number.isFinite(options.limitOverride) && options.limitOverride > 0
+        ? Math.min(options.limitOverride, PROJECT_LIMIT_MAX)
+        : PROJECT_LIMIT_MAX;
     const sessions = await listLocalCodexSessions({ limit: 300 });
-    const projects = buildProjectListFromSessions(sessions).slice(0, PROJECT_LIMIT_MAX);
+    const projects = buildProjectListFromSessions(sessions).slice(0, limit);
     if (!projects.length) {
       await ctx.reply('No encontré proyectos locales en sesiones de Codex.');
       return;
     }
 
-    const projectEntries = buildProjectMenuEntries(projects);
+    const menuInstanceId = createMenuInstanceId();
+    const projectEntries = buildProjectMenuEntries(projects, menuInstanceId);
     const key = menuNavKeyFromIds(chatId, topicId);
     menuNavCache.set(key, {
       createdAt: Date.now(),
+      menuInstanceId,
       level: 'projects',
       projectEntries,
       filteredProjectEntries: projectEntries,
+      sessionsSnapshot: sessions,
       page: 0,
       query: '',
+      awaitingSearch: false,
     });
 
     const paged = getPagedEntries(projectEntries, 0, MENU_PROJECT_PAGE_SIZE);
     await ctx.reply(
-      `Selecciona un proyecto (${paged.totalItems}) · página ${paged.page + 1}/${paged.totalPages}:`,
+      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems}) · página ${paged.page + 1}/${paged.totalPages}.\nUsa el selector P# en cada botón (P1, P2, ...).`,
       {
         reply_markup: buildProjectsMenuKeyboard(projectEntries, 0),
       }
@@ -450,11 +434,17 @@ function registerSettingsCommands(options) {
     const paged = getPagedEntries(filtered, page, MENU_PROJECT_PAGE_SIZE);
     const queryPart = state?.query ? ` · filtro: "${state.query}"` : '';
     await ctx.reply(
-      `Selecciona un proyecto (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}:`,
+      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.\nUsa el selector P# en cada botón.`,
       {
         reply_markup: buildProjectsMenuKeyboard(filtered, paged.page),
       }
     );
+  }
+
+  function resolveStateCwd(state) {
+    const selectedProjectCwd = String(state?.selectedProject?.cwd || '').trim();
+    if (selectedProjectCwd) return selectedProjectCwd;
+    return String(state?.cwd || '').trim();
   }
 
   async function renderSessionsPage(ctx, state) {
@@ -464,14 +454,17 @@ function registerSettingsCommands(options) {
     const page = Number(state?.page) || 0;
     const paged = getPagedEntries(entries, page, MENU_SESSION_PAGE_SIZE);
     const queryPart = state?.query ? ` · filtro: "${state.query}"` : '';
-    const header = state?.project?.cwd
-      ? `Proyecto: ${projectNameFromCwd(state.project.cwd)}`
+    const header = state?.selectedProject?.cwd
+      ? `Proyecto: ${projectNameFromCwd(state.selectedProject.cwd)}`
       : 'Sesiones recientes del proyecto activo';
+    const canCreateNew = Boolean(resolveStateCwd(state));
     const subtitle = paged.totalItems
-      ? `Selecciona sesión o crea una nueva (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.`
-      : `No hay sesiones en esta vista${queryPart}. Puedes crear una nueva o volver.`;
+      ? `Selecciona sesión${canCreateNew ? ' o crea una nueva' : ''} (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.`
+      : canCreateNew
+        ? `No hay sesiones en esta vista${queryPart}. Puedes crear una nueva o volver.`
+        : `No hay sesiones en esta vista${queryPart}. Usa Projects para elegir un proyecto.`;
     await ctx.reply([header, subtitle].join('\n'), {
-      reply_markup: buildSessionsMenuKeyboard(entries, paged.page),
+      reply_markup: buildSessionsMenuKeyboard(entries, paged.page, canCreateNew),
     });
   }
 
@@ -558,50 +551,46 @@ function registerSettingsCommands(options) {
     persistThreads().catch((err) =>
       console.warn('Failed to persist threads after resuming last session:', err)
     );
+    setMainMenuState(chatId, topicId);
     await ctx.reply(`Sesión reanudada: ${sessionId}`, {
-      reply_markup: {
-        remove_keyboard: true,
-      },
+      reply_markup: buildMainMenuKeyboard(),
     });
   }
 
-  async function showSessionsForProjectKeyboardMenu(ctx, project) {
+  async function openSessionsMenu(ctx, options = {}) {
     cleanupMenuNavCache();
     const chatId = ctx?.chat?.id || ctx?.message?.chat?.id;
     const topicId = getTopicId(ctx);
     if (!chatId) return;
 
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.reply('Usa /agent codex primero.');
-      return;
-    }
+    const { state: previousState } = resolveMenuStateForChatTopic(chatId, topicId);
+    const selectedProject = options.projectContext || null;
+    const cwd = String(
+      options.cwdOverride || selectedProject?.cwd || getGlobalAgentCwd()
+    ).trim();
+    const limit =
+      Number.isFinite(options.limitOverride) && options.limitOverride > 0
+        ? Math.min(options.limitOverride, MENU_SEARCH_MAX_RESULTS)
+        : MENU_SEARCH_MAX_RESULTS;
 
-    const cwd = String(project?.cwd || '').trim();
-    if (!cwd) {
-      await ctx.reply('No pude resolver el proyecto seleccionado.');
-      return;
-    }
-    setGlobalAgentCwd(cwd);
-    try {
-      await updateConfig({ agentCwd: cwd });
-    } catch (err) {
-      console.error(err);
-      await replyWithError(ctx, 'No pude guardar el proyecto activo.', err);
-      return;
-    }
-
-    const sessions = await listLocalCodexSessions({
-      limit: MENU_SEARCH_MAX_RESULTS,
-      cwd,
-    });
-    const sessionEntries = buildSessionMenuEntries(sessions);
+    const candidateSessions = Array.isArray(options.sessionCandidates)
+      ? options.sessionCandidates
+      : null;
+    const sessions = candidateSessions
+      ? candidateSessions.slice(0, limit)
+      : await listLocalCodexSessions({
+          limit,
+          cwd,
+        });
+    const menuInstanceId = createMenuInstanceId();
+    const sessionEntries = buildSessionMenuEntries(sessions, menuInstanceId);
     const key = menuNavKeyFromIds(chatId, topicId);
-    const previousState = menuNavCache.get(key);
+    const level = selectedProject ? 'project_sessions' : 'sessions';
     menuNavCache.set(key, {
       createdAt: Date.now(),
-      level: 'project_sessions',
-      project,
+      menuInstanceId,
+      level,
+      selectedProject,
       projectEntries: Array.isArray(previousState?.projectEntries)
         ? previousState.projectEntries
         : [],
@@ -610,18 +599,72 @@ function registerSettingsCommands(options) {
         : Array.isArray(previousState?.projectEntries)
           ? previousState.projectEntries
           : [],
-      projectPage: Number(previousState?.page) || 0,
-      projectQuery: String(previousState?.query || ''),
+      returnProjectsPage: Number(previousState?.page) || 0,
+      returnProjectsQuery: String(previousState?.query || ''),
+      sessionsSnapshot: Array.isArray(previousState?.sessionsSnapshot)
+        ? previousState.sessionsSnapshot
+        : [],
       sessionEntries,
       filteredSessionEntries: sessionEntries,
+      cwd,
       page: 0,
       query: '',
+      awaitingSearch: false,
     });
     await renderSessionsPage(ctx, menuNavCache.get(key));
   }
 
-  async function showRecentSessionsKeyboardMenu(ctx) {
-    cleanupMenuNavCache();
+  async function attachSessionFromEntry(ctx, state, sessionEntry) {
+    const chatId = ctx?.chat?.id || ctx?.message?.chat?.id;
+    const topicId = getTopicId(ctx);
+    if (!chatId || !sessionEntry?.session) return;
+
+    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
+    if (effectiveAgentId !== 'codex') {
+      await ctx.reply('Usa /agent codex primero.');
+      return;
+    }
+
+    const selected = sessionEntry.session;
+    const cwd = String(
+      selected.cwd || state?.selectedProject?.cwd || state?.cwd || ''
+    ).trim();
+    if (cwd) {
+      setGlobalAgentCwd(cwd);
+      try {
+        await updateConfig({ agentCwd: cwd });
+      } catch (err) {
+        console.error(err);
+        await replyWithError(ctx, 'No pude guardar el proyecto.', err);
+        return;
+      }
+    }
+
+    setThreadForAgent(chatId, topicId, effectiveAgentId, selected.id);
+    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
+    persistThreads().catch((err) =>
+      console.warn('Failed to persist threads after session attach from keyboard menu:', err)
+    );
+
+    let preview = '';
+    try {
+      preview = await getLocalCodexSessionLastMessage(selected.id, {
+        filePath: selected.filePath,
+      });
+    } catch (err) {
+      console.warn('Failed to get session preview:', err);
+    }
+
+    setMainMenuState(chatId, topicId);
+    const lines = [`Sesión conectada: ${selected.id}`];
+    if (cwd) lines.push(`Proyecto activo: ${projectNameFromCwd(cwd)}`);
+    if (preview) lines.push(`Último mensaje: ${preview.slice(0, 240)}`);
+    await ctx.reply(lines.join('\n'), {
+      reply_markup: buildMainMenuKeyboard(),
+    });
+  }
+
+  async function createNewSessionFromState(ctx, state) {
     const chatId = ctx?.chat?.id || ctx?.message?.chat?.id;
     const topicId = getTopicId(ctx);
     if (!chatId) return;
@@ -632,23 +675,36 @@ function registerSettingsCommands(options) {
       return;
     }
 
-    const cwd = getGlobalAgentCwd();
-    const sessions = await listLocalCodexSessions({
-      limit: MENU_SEARCH_MAX_RESULTS,
-      cwd,
-    });
-    const sessionEntries = buildSessionMenuEntries(sessions);
-    const key = menuNavKeyFromIds(chatId, topicId);
-    menuNavCache.set(key, {
-      createdAt: Date.now(),
-      level: 'sessions',
-      sessionEntries,
-      filteredSessionEntries: sessionEntries,
-      cwd,
-      page: 0,
-      query: '',
-    });
-    await renderSessionsPage(ctx, menuNavCache.get(key));
+    const cwd = resolveStateCwd(state);
+    if (!cwd) {
+      await ctx.reply('No pude resolver el proyecto. Abre Projects desde /menu.');
+      return;
+    }
+
+    setGlobalAgentCwd(cwd);
+    clearThreadForAgent(chatId, topicId, effectiveAgentId);
+    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
+    persistThreads().catch((err) =>
+      console.warn('Failed to persist threads after new session selection:', err)
+    );
+
+    try {
+      await updateConfig({ agentCwd: cwd });
+    } catch (err) {
+      console.error(err);
+      await replyWithError(ctx, 'No pude guardar el proyecto.', err);
+      return;
+    }
+
+    setMainMenuState(chatId, topicId);
+    await ctx.reply(
+      `Proyecto activo: ${projectNameFromCwd(
+        cwd
+      )}\nSe creó una sesión nueva para este tópico.`,
+      {
+        reply_markup: buildMainMenuKeyboard(),
+      }
+    );
   }
 
   bot.command('thinking', async (ctx) => {
@@ -876,36 +932,16 @@ function registerSettingsCommands(options) {
       await denySensitiveCommand(ctx);
       return;
     }
-    const topicId = getTopicId(ctx);
-    const effectiveAgentId =
-      getAgentOverride(ctx.chat.id, topicId) || getGlobalAgent();
-    if (effectiveAgentId !== 'codex') {
-      await ctx.reply('`/sessions` is only available when using codex. Use /agent codex.');
-      return;
-    }
-
     const rawValue = extractCommandValue(ctx.message.text);
     const limit = parseSessionLimit(rawValue);
-    const cwd = getGlobalAgentCwd();
     try {
-      const sessions = await listLocalCodexSessions({ limit, cwd });
-      if (!sessions.length) {
-        const suffix = cwd ? ` para proyecto ${projectNameFromCwd(cwd)}` : '';
-        await ctx.reply(`No local Codex sessions found${suffix}.`);
-        return;
-      }
-      const lines = sessions.map(formatSessionLine);
-      const header = cwd
-        ? `Recent Codex sessions for ${projectNameFromCwd(cwd)}:`
-        : 'Recent Codex sessions:';
-      await ctx.reply([header, ...lines, '', 'Tap a button to attach a session.'].join('\n'), {
-        reply_markup: {
-          inline_keyboard: buildSessionButtons(sessions),
-        },
+      await openSessionsMenu(ctx, {
+        limitOverride: limit,
+        cwdOverride: getGlobalAgentCwd(),
       });
     } catch (err) {
       console.error(err);
-      await replyWithError(ctx, 'Failed to list local Codex sessions.', err);
+      await replyWithError(ctx, 'No pude abrir sesiones del menú.', err);
     }
   });
 
@@ -914,50 +950,15 @@ function registerSettingsCommands(options) {
       await denySensitiveCommand(ctx);
       return;
     }
-    cleanupProjectPickerCache();
-    const topicId = getTopicId(ctx);
-    const effectiveAgentId =
-      getAgentOverride(ctx.chat.id, topicId) || getGlobalAgent();
-    if (effectiveAgentId !== 'codex') {
-      await ctx.reply('`/projects` is only available when using codex. Use /agent codex.');
-      return;
-    }
-
     const rawValue = extractCommandValue(ctx.message.text);
     const limit = parseProjectLimit(rawValue);
     try {
-      const sessions = await listLocalCodexSessions({ limit: 300 });
-      const projects = buildProjectListFromSessions(sessions).slice(0, limit);
-      if (!projects.length) {
-        await ctx.reply('No local Codex projects found in sessions.');
-        return;
-      }
-      const lines = projects.map(
-        (project) =>
-          `- ${projectDisplayLabel(project)} | latest: ${shortSessionId(
-            project.latestSessionId
-          )}`
-      );
-      const pickerToken = `${Date.now().toString(36)}${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-      const sent = await ctx.reply(
-        ['Recent projects from local Codex sessions:', ...lines, '', 'Tap a project to open latest session in it.'].join('\n'),
-        {
-          reply_markup: {
-            inline_keyboard: buildProjectButtons(pickerToken, projects),
-          },
-        }
-      );
-      const key = `${ctx.chat.id}:${pickerToken}`;
-      projectPickerCache.set(key, {
-        createdAt: Date.now(),
-        messageId: sent.message_id,
-        projects,
+      await openProjectsMenu(ctx, {
+        limitOverride: limit,
       });
     } catch (err) {
       console.error(err);
-      await replyWithError(ctx, 'Failed to list local Codex projects.', err);
+      await replyWithError(ctx, 'No pude abrir proyectos del menú.', err);
     }
   });
 
@@ -966,7 +967,7 @@ function registerSettingsCommands(options) {
       await denySensitiveCommand(ctx);
       return;
     }
-    await replyMainMenu(ctx);
+    await openMainMenu(ctx);
   });
 
   bot.hears(/^ocultar teclado$/i, async (ctx) => {
@@ -980,13 +981,13 @@ function registerSettingsCommands(options) {
     });
   });
 
-  bot.hears(/^project$/i, async (ctx) => {
+  bot.hears(/^projects?$/i, async (ctx) => {
     if (!canUseSensitiveCommands()) {
       await denySensitiveCommand(ctx);
       return;
     }
     try {
-      await showProjectsKeyboardMenu(ctx);
+      await openProjectsMenu(ctx);
     } catch (err) {
       console.error(err);
       await replyWithError(ctx, 'No pude abrir proyectos del menú.', err);
@@ -999,7 +1000,9 @@ function registerSettingsCommands(options) {
       return;
     }
     try {
-      await showRecentSessionsKeyboardMenu(ctx);
+      await openSessionsMenu(ctx, {
+        cwdOverride: getGlobalAgentCwd(),
+      });
     } catch (err) {
       console.error(err);
       await replyWithError(ctx, 'No pude abrir sesiones del menú.', err);
@@ -1025,15 +1028,15 @@ function registerSettingsCommands(options) {
       return;
     }
     cleanupMenuNavCache();
-    const key = menuNavKeyFromIds(ctx.chat.id, getTopicId(ctx));
-    const state = menuNavCache.get(key);
+    const { key, state } = resolveMenuStateForChatTopic(ctx.chat.id, getTopicId(ctx));
     if (!state || state.level === 'main') {
-      await replyMainMenu(ctx);
+      await openMainMenu(ctx);
       return;
     }
     if (state.level === 'project_sessions') {
       const previous = {
         createdAt: Date.now(),
+        menuInstanceId: state.menuInstanceId || createMenuInstanceId(),
         level: 'projects',
         projectEntries: Array.isArray(state.projectEntries)
           ? state.projectEntries
@@ -1043,12 +1046,14 @@ function registerSettingsCommands(options) {
           : Array.isArray(state.projectEntries)
             ? state.projectEntries
           : [],
-        page: Number(state.projectPage) || 0,
-        query: String(state.projectQuery || ''),
+        page: Number(state.returnProjectsPage) || 0,
+        query: String(state.returnProjectsQuery || ''),
+        sessionsSnapshot: Array.isArray(state.sessionsSnapshot) ? state.sessionsSnapshot : [],
+        awaitingSearch: false,
       };
       if (!Array.isArray(previous.projectEntries) || !previous.projectEntries.length) {
         try {
-          await showProjectsKeyboardMenu(ctx);
+          await openProjectsMenu(ctx);
         } catch (err) {
           console.error(err);
           await replyWithError(ctx, 'No pude volver a la lista de proyectos.', err);
@@ -1059,7 +1064,7 @@ function registerSettingsCommands(options) {
       await renderProjectsPage(ctx, previous);
       return;
     }
-    await replyMainMenu(ctx);
+    await openMainMenu(ctx);
   });
 
   bot.hears(/^buscar$/i, async (ctx) => {
@@ -1068,8 +1073,7 @@ function registerSettingsCommands(options) {
       return;
     }
     cleanupMenuNavCache();
-    const key = menuNavKeyFromIds(ctx.chat.id, getTopicId(ctx));
-    const state = menuNavCache.get(key);
+    const { key, state } = resolveMenuStateForChatTopic(ctx.chat.id, getTopicId(ctx));
     const nextState = setAwaitingSearch(state);
     if (!nextState || nextState === state) return;
     menuNavCache.set(key, nextState);
@@ -1082,8 +1086,7 @@ function registerSettingsCommands(options) {
       return;
     }
     cleanupMenuNavCache();
-    const key = menuNavKeyFromIds(ctx.chat.id, getTopicId(ctx));
-    const state = menuNavCache.get(key);
+    const { key, state } = resolveMenuStateForChatTopic(ctx.chat.id, getTopicId(ctx));
     if (!state) return;
 
     if (state.level === 'projects') {
@@ -1115,8 +1118,7 @@ function registerSettingsCommands(options) {
       return;
     }
     cleanupMenuNavCache();
-    const key = menuNavKeyFromIds(ctx.chat.id, getTopicId(ctx));
-    const state = menuNavCache.get(key);
+    const { key, state } = resolveMenuStateForChatTopic(ctx.chat.id, getTopicId(ctx));
     if (!state) return;
 
     if (state.level === 'projects') {
@@ -1150,138 +1152,98 @@ function registerSettingsCommands(options) {
     cleanupMenuNavCache();
     const chatId = ctx.chat.id;
     const topicId = getTopicId(ctx);
-    const key = menuNavKeyFromIds(chatId, topicId);
-    const state = menuNavCache.get(key);
+    const { state } = resolveMenuStateForChatTopic(chatId, topicId);
     if (!state || (state.level !== 'project_sessions' && state.level !== 'sessions')) return;
 
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.reply('Usa /agent codex primero.');
-      return;
-    }
-
-    const cwd = String(state.project?.cwd || state.cwd || '').trim();
-    if (!cwd) {
-      await ctx.reply('No pude resolver el proyecto. Vuelve a /menu.');
-      return;
-    }
-
-    setGlobalAgentCwd(cwd);
-    clearThreadForAgent(chatId, topicId, effectiveAgentId);
-    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
-    persistThreads().catch((err) =>
-      console.warn('Failed to persist threads after new session selection:', err)
-    );
-
-    try {
-      await updateConfig({ agentCwd: cwd });
-      await ctx.reply(
-        `Proyecto activo: ${projectNameFromCwd(
-          cwd
-        )}\nSe creó una sesión nueva para este tópico.`,
-        {
-          reply_markup: {
-            remove_keyboard: true,
-          },
-        }
-      );
-      menuNavCache.set(key, {
-        createdAt: Date.now(),
-        level: 'main',
-      });
-    } catch (err) {
-      console.error(err);
-      await replyWithError(ctx, 'No pude guardar el proyecto.', err);
-    }
+    await createNewSessionFromState(ctx, state);
   });
 
   bot.hears(/^.+$/, async (ctx, next) => {
+    cleanupMenuNavCache();
+    const chatId = ctx.chat.id;
+    const topicId = getTopicId(ctx);
+    const selectedLabel = String(ctx.message?.text || '').trim();
+    const {
+      menuInstanceId: selectedMenuInstanceId,
+      selectKey: selectedKey,
+    } = extractSelectPayload(selectedLabel);
+    const { state } = resolveMenuStateForChatTopic(chatId, topicId);
+    if (!state) {
+      if (selectedKey) {
+        if (!canUseSensitiveCommands()) {
+          await denySensitiveCommand(ctx);
+          return;
+        }
+        await ctx.reply(MENU_EXPIRED_MESSAGE);
+        return;
+      }
+      return next();
+    }
     if (!canUseSensitiveCommands()) {
       await denySensitiveCommand(ctx);
       return;
     }
-    cleanupMenuNavCache();
-    const chatId = ctx.chat.id;
-    const topicId = getTopicId(ctx);
-    const key = menuNavKeyFromIds(chatId, topicId);
-    const state = menuNavCache.get(key);
-    const selectedLabel = String(ctx.message?.text || '').trim();
-    if (!state) return next();
+    if (
+      selectedKey &&
+      state.level !== 'projects' &&
+      state.level !== 'project_sessions' &&
+      state.level !== 'sessions'
+    ) {
+      await ctx.reply(MENU_EXPIRED_MESSAGE);
+      return;
+    }
+    if (
+      selectedKey &&
+      selectedMenuInstanceId &&
+      state.menuInstanceId &&
+      selectedMenuInstanceId !== state.menuInstanceId
+    ) {
+      await ctx.reply(MENU_EXPIRED_MESSAGE);
+      return;
+    }
 
     if (state.level === 'projects') {
-      const selectedEntry = (state.filteredProjectEntries || []).find(
-        (entry) => entry.label === selectedLabel
-      );
-      if (!selectedEntry) return next();
+      const selectedEntry = selectedKey
+        ? (state.filteredProjectEntries || []).find(
+            (entry) => entry.selectKey === selectedKey
+          )
+        : null;
+      if (!selectedEntry) {
+        await ctx.reply('No reconocí ese proyecto. Usa los botones del teclado o /menu.');
+        return;
+      }
       try {
-        await showSessionsForProjectKeyboardMenu(ctx, selectedEntry.project);
+        await createNewSessionFromState(ctx, {
+          ...state,
+          selectedProject: selectedEntry.project,
+          cwd: selectedEntry.project.cwd,
+        });
       } catch (err) {
         console.error(err);
-        await replyWithError(ctx, 'No pude cargar sesiones del proyecto.', err);
+        await replyWithError(ctx, 'No pude crear la nueva sesión del proyecto.', err);
       }
       return;
     }
 
     if (state.level !== 'project_sessions' && state.level !== 'sessions') return next();
 
-    const selectedEntry = (state.filteredSessionEntries || []).find(
-      (entry) => entry.label === selectedLabel
-    );
-    if (!selectedEntry || !isValidSessionId(selectedEntry.session.id)) return next();
-
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.reply('Usa /agent codex primero.');
+    const selectedEntry = selectedKey
+      ? (state.filteredSessionEntries || []).find(
+          (entry) => entry.selectKey === selectedKey
+        )
+      : null;
+    const selectedSessionId = String(selectedEntry?.session?.id || '').trim();
+    if (!selectedEntry || !selectedSessionId || !isValidSessionId(selectedSessionId)) {
+      await ctx.reply('No reconocí esa sesión. Usa los botones del teclado o /menu.');
       return;
     }
-
-    const selected = selectedEntry.session;
-    const cwd = String(selected.cwd || state.project?.cwd || state.cwd || '').trim();
-    if (cwd) {
-      setGlobalAgentCwd(cwd);
-      try {
-        await updateConfig({ agentCwd: cwd });
-      } catch (err) {
-        console.error(err);
-        await replyWithError(ctx, 'No pude guardar el proyecto.', err);
-        return;
-      }
-    }
-
-    setThreadForAgent(chatId, topicId, effectiveAgentId, selected.id);
-    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
-    persistThreads().catch((err) =>
-      console.warn('Failed to persist threads after session attach from keyboard menu:', err)
-    );
-
-    let preview = '';
-    try {
-      preview = await getLocalCodexSessionLastMessage(selected.id, {
-        filePath: selected.filePath,
-      });
-    } catch (err) {
-      console.warn('Failed to get session preview:', err);
-    }
-
-    const lines = [`Sesión conectada: ${selected.id}`];
-    if (cwd) lines.push(`Proyecto activo: ${projectNameFromCwd(cwd)}`);
-    if (preview) lines.push(`Último mensaje: ${preview.slice(0, 240)}`);
-    await ctx.reply(lines.join('\n'), {
-      reply_markup: {
-        remove_keyboard: true,
-      },
-    });
-    menuNavCache.set(key, {
-      createdAt: Date.now(),
-      level: 'main',
-    });
+    await attachSessionFromEntry(ctx, state, selectedEntry);
     return;
   });
 
   bot.on('text', async (ctx, next) => {
     cleanupMenuNavCache();
-    const key = menuNavKeyFromIds(ctx.chat.id, getTopicId(ctx));
-    const state = menuNavCache.get(key);
+    const { key, state } = resolveMenuStateForChatTopic(ctx.chat.id, getTopicId(ctx));
     if (!state?.awaitingSearch) {
       return next();
     }
@@ -1313,278 +1275,21 @@ function registerSettingsCommands(options) {
     return next();
   });
 
-  bot.action('menu_main', async (ctx) => {
+  async function replyLegacyMenuAction(ctx) {
     if (!canUseSensitiveCommands()) {
       await denySensitiveAction(ctx);
       return;
     }
-    await ctx.answerCbQuery();
-    await replyMainMenu(ctx);
-  });
+    await ctx.answerCbQuery(MENU_EXPIRED_MESSAGE, { show_alert: true });
+    await ctx.reply(MENU_EXPIRED_MESSAGE);
+  }
 
-  bot.action('menu_projects', async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    cleanupMenuCaches();
-    const chatId = ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id;
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    if (!chatId) {
-      await ctx.answerCbQuery('No pude resolver el chat.', { show_alert: true });
-      return;
-    }
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Usa /agent codex primero.', { show_alert: true });
-      return;
-    }
-
-    const sessions = await listLocalCodexSessions({ limit: 300 });
-    const projects = buildProjectListFromSessions(sessions).slice(0, PROJECT_LIMIT_MAX);
-    if (!projects.length) {
-      await ctx.answerCbQuery();
-      await ctx.reply('No encontré proyectos locales en sesiones de Codex.');
-      return;
-    }
-
-    const token = createPickerToken();
-    menuProjectCache.set(`${chatId}:${token}`, {
-      createdAt: Date.now(),
-      projects,
-    });
-    await ctx.answerCbQuery();
-    await ctx.reply('Proyectos detectados:', {
-      reply_markup: {
-        inline_keyboard: buildMenuProjectButtons(token, projects),
-      },
-    });
-  });
-
-  bot.action(/^menu_project:([a-z0-9]+):([0-9]+)$/, async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    cleanupMenuCaches();
-    const token = String(ctx.match?.[1] || '');
-    const index = Number(ctx.match?.[2]);
-    const chatId = Number(ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id);
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    if (!token || !Number.isFinite(chatId)) {
-      await ctx.answerCbQuery('Selección inválida.', { show_alert: true });
-      return;
-    }
-
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Usa /agent codex primero.', { show_alert: true });
-      return;
-    }
-
-    const cacheKey = `${chatId}:${token}`;
-    const cached = menuProjectCache.get(cacheKey);
-    const selected = Array.isArray(cached?.projects) ? cached.projects[index] : undefined;
-    if (!selected) {
-      await ctx.answerCbQuery('Selección caducada. Usa /menu.', { show_alert: true });
-      return;
-    }
-
-    const sessions = await listLocalCodexSessions({
-      limit: 200,
-      cwd: selected.cwd,
-    });
-    const shortSessions = sessions.slice(0, MENU_SESSION_LIST_LIMIT);
-    const sessionToken = createPickerToken();
-    menuSessionCache.set(`${chatId}:${sessionToken}`, {
-      createdAt: Date.now(),
-      cwd: selected.cwd,
-      sessions: shortSessions,
-    });
-
-    const lines = [
-      `Proyecto: ${projectNameFromCwd(selected.cwd)}`,
-      shortSessions.length
-        ? 'Selecciona una sesión o crea una nueva:'
-        : 'No hay sesiones previas. Puedes crear una nueva:',
-    ];
-    const buttons = [
-      ...buildMenuSessionButtons(sessionToken, shortSessions, false),
-      [{ text: 'Nueva sesión', callback_data: `menu_session_new:${sessionToken}` }],
-      [{ text: 'Volver', callback_data: 'menu_projects' }],
-    ];
-
-    await ctx.answerCbQuery();
-    await ctx.reply(lines.join('\n'), {
-      reply_markup: {
-        inline_keyboard: buttons,
-      },
-    });
-  });
-
-  bot.action('menu_sessions', async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    cleanupMenuCaches();
-    const chatId = ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id;
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    if (!chatId) {
-      await ctx.answerCbQuery('No pude resolver el chat.', { show_alert: true });
-      return;
-    }
-
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Usa /agent codex primero.', { show_alert: true });
-      return;
-    }
-
-    const sessions = await listLocalCodexSessions({
-      limit: MENU_SESSION_LIST_LIMIT,
-      cwd: getGlobalAgentCwd(),
-    });
-    if (!sessions.length) {
-      await ctx.answerCbQuery();
-      await ctx.reply('No encontré sesiones recientes para el proyecto actual.');
-      return;
-    }
-
-    const token = createPickerToken();
-    menuSessionCache.set(`${chatId}:${token}`, {
-      createdAt: Date.now(),
-      cwd: getGlobalAgentCwd(),
-      sessions,
-    });
-    await ctx.answerCbQuery();
-    await ctx.reply('Sesiones recientes:', {
-      reply_markup: {
-        inline_keyboard: buildMenuSessionButtons(token, sessions, true),
-      },
-    });
-  });
-
-  bot.action(/^menu_session_new:([a-z0-9]+)$/, async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    cleanupMenuCaches();
-    const token = String(ctx.match?.[1] || '');
-    const chatId = Number(ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id);
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    if (!token || !Number.isFinite(chatId)) {
-      await ctx.answerCbQuery('Selección inválida.', { show_alert: true });
-      return;
-    }
-
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Usa /agent codex primero.', { show_alert: true });
-      return;
-    }
-
-    const cached = menuSessionCache.get(`${chatId}:${token}`);
-    const cwd = String(cached?.cwd || '').trim();
-    if (!cwd) {
-      await ctx.answerCbQuery('La selección expiró. Usa /menu.', { show_alert: true });
-      return;
-    }
-
-    setGlobalAgentCwd(cwd);
-    clearThreadForAgent(chatId, topicId, effectiveAgentId);
-    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
-    persistThreads().catch((err) =>
-      console.warn('Failed to persist threads after new session selection:', err)
-    );
-
-    try {
-      await updateConfig({ agentCwd: cwd });
-    } catch (err) {
-      console.error(err);
-      await ctx.answerCbQuery('No pude guardar el proyecto.', { show_alert: true });
-      return;
-    }
-
-    await ctx.answerCbQuery('Nueva sesión lista.');
-    await ctx.reply(
-      `Proyecto activo: ${projectNameFromCwd(
-        cwd
-      )}\nSe creó una sesión nueva para este tópico.`,
-      {
-        reply_markup: {
-          remove_keyboard: true,
-        },
-      }
-    );
-  });
-
-  bot.action(/^menu_session_attach:([a-z0-9]+):([0-9]+)$/, async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    cleanupMenuCaches();
-    const token = String(ctx.match?.[1] || '');
-    const index = Number(ctx.match?.[2]);
-    const chatId = Number(ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id);
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    if (!token || !Number.isFinite(chatId)) {
-      await ctx.answerCbQuery('Selección inválida.', { show_alert: true });
-      return;
-    }
-
-    const effectiveAgentId = effectiveAgentFor(chatId, topicId);
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Usa /agent codex primero.', { show_alert: true });
-      return;
-    }
-
-    const cached = menuSessionCache.get(`${chatId}:${token}`);
-    const selected = Array.isArray(cached?.sessions) ? cached.sessions[index] : undefined;
-    if (!selected || !isValidSessionId(selected.id)) {
-      await ctx.answerCbQuery('Selección caducada. Usa /menu.', { show_alert: true });
-      return;
-    }
-
-    const cwd = String(selected.cwd || cached?.cwd || '').trim();
-    if (cwd) {
-      setGlobalAgentCwd(cwd);
-      try {
-        await updateConfig({ agentCwd: cwd });
-      } catch (err) {
-        console.error(err);
-        await ctx.answerCbQuery('No pude guardar el proyecto.', { show_alert: true });
-        return;
-      }
-    }
-
-    setThreadForAgent(chatId, topicId, effectiveAgentId, selected.id);
-    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
-    persistThreads().catch((err) =>
-      console.warn('Failed to persist threads after session attach from menu:', err)
-    );
-
-    let preview = '';
-    try {
-      preview = await getLocalCodexSessionLastMessage(selected.id, {
-        filePath: selected.filePath,
-      });
-    } catch (err) {
-      console.warn('Failed to get session preview:', err);
-    }
-
-    await ctx.answerCbQuery('Sesión conectada.');
-    const lines = [`Sesión conectada: ${selected.id}`];
-    if (cwd) lines.push(`Proyecto activo: ${projectNameFromCwd(cwd)}`);
-    if (preview) lines.push(`Último mensaje: ${preview.slice(0, 240)}`);
-    await ctx.reply(lines.join('\n'), {
-      reply_markup: {
-        remove_keyboard: true,
-      },
-    });
-  });
+  bot.action('menu_main', replyLegacyMenuAction);
+  bot.action('menu_projects', replyLegacyMenuAction);
+  bot.action('menu_sessions', replyLegacyMenuAction);
+  bot.action(/^menu_project:([a-z0-9]+):([0-9]+)$/, replyLegacyMenuAction);
+  bot.action(/^menu_session_new:([a-z0-9]+)$/, replyLegacyMenuAction);
+  bot.action(/^menu_session_attach:([a-z0-9]+):([0-9]+)$/, replyLegacyMenuAction);
 
   bot.command('session', async (ctx) => {
     if (!canUseSensitiveCommands()) {
@@ -1619,103 +1324,8 @@ function registerSettingsCommands(options) {
     await ctx.reply(`Attached session ${sessionId} to this topic.`);
   });
 
-  bot.action(/^session_attach:(.+)$/, async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    const rawSessionId = ctx.match?.[1];
-    const sessionId = String(rawSessionId || '').trim();
-    if (!(typeof isValidSessionId === 'function' && isValidSessionId(sessionId))) {
-      await ctx.answerCbQuery('Invalid session id.', { show_alert: true });
-      return;
-    }
-
-    const chatId = ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id;
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    if (!chatId) {
-      await ctx.answerCbQuery('Unable to resolve chat context.', { show_alert: true });
-      return;
-    }
-
-    const effectiveAgentId = getAgentOverride(chatId, topicId) || getGlobalAgent();
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Use /agent codex first.', { show_alert: true });
-      return;
-    }
-
-    setThreadForAgent(chatId, topicId, effectiveAgentId, sessionId);
-    threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
-    persistThreads().catch((err) =>
-      console.warn('Failed to persist threads after session attach:', err)
-    );
-
-    await ctx.answerCbQuery('Session attached.');
-    await ctx.reply(`Attached session ${sessionId} to this topic.`);
-  });
-
-  bot.action(/^project_open:([a-z0-9]+):([0-9]+)$/, async (ctx) => {
-    if (!canUseSensitiveCommands()) {
-      await denySensitiveAction(ctx);
-      return;
-    }
-    cleanupProjectPickerCache();
-    const token = String(ctx.match?.[1] || '');
-    const index = Number(ctx.match?.[2]);
-    const chatId = Number(ctx?.chat?.id || ctx?.callbackQuery?.message?.chat?.id);
-    if (!token || !Number.isFinite(chatId)) {
-      await ctx.answerCbQuery('Invalid project selection.', { show_alert: true });
-      return;
-    }
-    const cacheKey = `${chatId}:${token}`;
-    const cached = projectPickerCache.get(cacheKey);
-    const selected = Array.isArray(cached?.projects) ? cached.projects[index] : undefined;
-    if (!selected) {
-      await ctx.answerCbQuery('Selection expired. Run /projects again.', {
-        show_alert: true,
-      });
-      return;
-    }
-
-    const topicId = ctx?.callbackQuery?.message?.message_thread_id;
-    const effectiveAgentId = getAgentOverride(chatId, topicId) || getGlobalAgent();
-    if (effectiveAgentId !== 'codex') {
-      await ctx.answerCbQuery('Use /agent codex first.', { show_alert: true });
-      return;
-    }
-
-    setGlobalAgentCwd(selected.cwd);
-    try {
-      await updateConfig({ agentCwd: selected.cwd });
-    } catch (err) {
-      console.error(err);
-      await ctx.answerCbQuery('Failed to persist project.', { show_alert: true });
-      return;
-    }
-
-    const sessionId = selected.latestSessionId;
-    if (sessionId && isValidSessionId(sessionId)) {
-      setThreadForAgent(chatId, topicId, effectiveAgentId, sessionId);
-      threadTurns.delete(`${buildTopicKey(chatId, topicId)}:${effectiveAgentId}`);
-      persistThreads().catch((err) =>
-        console.warn('Failed to persist threads after project attach:', err)
-      );
-      await ctx.answerCbQuery('Project and session attached.');
-      await ctx.reply(
-        `Project set to ${projectNameFromCwd(
-          selected.cwd
-        )}\nAttached latest session ${sessionId} to this topic.`
-      );
-      return;
-    }
-
-    await ctx.answerCbQuery('Project selected.');
-    await ctx.reply(
-      `Project set to ${projectNameFromCwd(
-        selected.cwd
-      )}\nNo valid recent session id found; next message will start a new one.`
-    );
-  });
+  bot.action(/^session_attach:(.+)$/, replyLegacyMenuAction);
+  bot.action(/^project_open:([a-z0-9]+):([0-9]+)$/, replyLegacyMenuAction);
 }
 
 module.exports = {

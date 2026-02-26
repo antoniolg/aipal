@@ -121,6 +121,7 @@ const { bootstrapApp } = require('./app/bootstrap');
 const { initializeApp, installShutdownHooks } = require('./app/lifecycle');
 const { registerCommands } = require('./app/register-commands');
 const { registerHandlers } = require('./app/register-handlers');
+const { buildMainMenuKeyboard } = require('./commands/menu-keyboard');
 
 installLogTimestamps();
 
@@ -132,18 +133,6 @@ if (!BOT_TOKEN) {
 
 const bot = new Telegraf(BOT_TOKEN);
 const allowedUsers = parseAllowedUsersEnv(process.env.ALLOWED_USERS);
-
-function buildPersistentKeyboard() {
-  return {
-    keyboard: [
-      [{ text: 'Project' }, { text: 'Sesiones' }],
-      [{ text: 'Reanudar última' }],
-      [{ text: 'Ocultar teclado' }],
-    ],
-    resize_keyboard: true,
-    is_persistent: true,
-  };
-}
 
 // Access control middleware: must be registered before any other handlers
 if (allowedUsers.size > 0) {
@@ -357,7 +346,7 @@ bot.start(async (ctx) => {
   await ctx.reply(
     `Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`,
     {
-      reply_markup: buildPersistentKeyboard(),
+      reply_markup: buildMainMenuKeyboard(),
     }
   );
 });
