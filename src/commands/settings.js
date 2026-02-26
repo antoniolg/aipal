@@ -419,7 +419,7 @@ function registerSettingsCommands(options) {
 
     const paged = getPagedEntries(projectEntries, 0, MENU_PROJECT_PAGE_SIZE);
     await ctx.reply(
-      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems}) · página ${paged.page + 1}/${paged.totalPages}.\nUsa el selector P# en cada botón (P1, P2, ...).`,
+      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems}) · página ${paged.page + 1}/${paged.totalPages}.`,
       {
         reply_markup: buildProjectsMenuKeyboard(projectEntries, 0),
       }
@@ -434,7 +434,7 @@ function registerSettingsCommands(options) {
     const paged = getPagedEntries(filtered, page, MENU_PROJECT_PAGE_SIZE);
     const queryPart = state?.query ? ` · filtro: "${state.query}"` : '';
     await ctx.reply(
-      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.\nUsa el selector P# en cada botón.`,
+      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.`,
       {
         reply_markup: buildProjectsMenuKeyboard(filtered, paged.page),
       }

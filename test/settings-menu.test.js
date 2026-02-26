@@ -164,6 +164,8 @@ test('/menu shows the main persistent keyboard', async () => {
   const last = replies.at(-1);
   assert.equal(last.text, 'Menú principal:');
   assert.equal(last.options.reply_markup.keyboard[0][0].text, 'Projects');
+  const allButtons = last.options.reply_markup.keyboard.flat().map((btn) => btn.text);
+  assert.equal(allButtons.includes('Sesiones'), false);
 });
 
 test('/projects and keyboard Projects open the same projects keyboard flow', async () => {
