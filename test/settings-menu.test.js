@@ -194,7 +194,7 @@ test('/projects and keyboard Projects open the same projects keyboard flow', asy
   assert.equal(fromKeyboard.options.reply_markup.keyboard.at(-1)[0].text, 'Volver');
 });
 
-test('project selection creates new session directly and returns main keyboard', async () => {
+test('project selection opens project actions submenu', async () => {
   const replies = [];
   const callbacks = [];
   const setThreadCalls = [];
@@ -216,12 +216,136 @@ test('project selection creates new session directly and returns main keyboard',
   const projectLabel = replies.at(-1).options.reply_markup.keyboard[0][0].text;
   await catchAll(createCtx(replies, callbacks, projectLabel), async () => {});
 
+  const submenu = replies.at(-1);
+  assert.match(submenu.text, /^Proyecto:/);
+  assert.equal(submenu.options.reply_markup.keyboard[0][0].text, 'Crear una nueva sesión');
+  assert.equal(submenu.options.reply_markup.keyboard[1][0].text, 'Última sesión usada');
+  assert.equal(submenu.options.reply_markup.keyboard[2][0].text, 'Volver');
+  assert.equal(setThreadCalls.length, 0);
+  assert.equal(clearThreadCalls.length, 0);
+  assert.equal(configUpdates.length, 0);
+});
+
+test('project actions -> crear nueva sesión clears current thread and returns main keyboard', async () => {
+  const replies = [];
+  const callbacks = [];
+  const setThreadCalls = [];
+  const clearThreadCalls = [];
+  const configUpdates = [];
+  const options = createOptions({
+    replies,
+    callbacks,
+    setThreadCalls,
+    clearThreadCalls,
+    configUpdates,
+  });
+  const bot = options.bot;
+  registerSettingsCommands(options);
+
+  const catchAll = findHearsHandler(bot, '^.+$');
+  const createNew = findHearsHandler(bot, '^crear una nueva sesión$');
+  await bot.commands.get('projects')(createCtx(replies, callbacks, '/projects'));
+
+  const projectLabel = replies.at(-1).options.reply_markup.keyboard[0][0].text;
+  await catchAll(createCtx(replies, callbacks, projectLabel), async () => {});
+  await createNew(createCtx(replies, callbacks, 'Crear una nueva sesión'));
+
   const confirm = replies.at(-1);
   assert.match(confirm.text, /Se creó una sesión nueva/);
   assert.equal(confirm.options.reply_markup.keyboard[0][0].text, 'Projects');
   assert.equal(setThreadCalls.length, 0);
   assert.equal(clearThreadCalls.length, 1);
   assert.equal(configUpdates.length > 0, true);
+});
+
+test('project actions -> última sesión usada attaches latest session', async () => {
+  const replies = [];
+  const callbacks = [];
+  const setThreadCalls = [];
+  const clearThreadCalls = [];
+  const configUpdates = [];
+  const options = createOptions({
+    replies,
+    callbacks,
+    setThreadCalls,
+    clearThreadCalls,
+    configUpdates,
+  });
+  const bot = options.bot;
+  registerSettingsCommands(options);
+
+  const catchAll = findHearsHandler(bot, '^.+$');
+  const attachLast = findHearsHandler(bot, '^(última|ultima) sesión usada$');
+  await bot.commands.get('projects')(createCtx(replies, callbacks, '/projects'));
+
+  const projectLabel = replies.at(-1).options.reply_markup.keyboard[0][0].text;
+  await catchAll(createCtx(replies, callbacks, projectLabel), async () => {});
+  await attachLast(createCtx(replies, callbacks, 'Última sesión usada'));
+
+  const confirm = replies.at(-1);
+  assert.match(confirm.text, /^Sesión conectada:/);
+  assert.equal(confirm.options.reply_markup.keyboard[0][0].text, 'Projects');
+  assert.equal(setThreadCalls.length, 1);
+  assert.equal(clearThreadCalls.length, 0);
+});
+
+test('project actions -> última sesión used falls back to create new when no usable session exists', async () => {
+  const replies = [];
+  const callbacks = [];
+  const setThreadCalls = [];
+  const clearThreadCalls = [];
+  const configUpdates = [];
+  const options = createOptions({
+    replies,
+    callbacks,
+    setThreadCalls,
+    clearThreadCalls,
+    configUpdates,
+  });
+  options.isValidSessionId = () => false;
+  const bot = options.bot;
+  registerSettingsCommands(options);
+
+  const catchAll = findHearsHandler(bot, '^.+$');
+  const attachLast = findHearsHandler(bot, '^(última|ultima) sesión usada$');
+  await bot.commands.get('projects')(createCtx(replies, callbacks, '/projects'));
+
+  const projectLabel = replies.at(-1).options.reply_markup.keyboard[0][0].text;
+  await catchAll(createCtx(replies, callbacks, projectLabel), async () => {});
+  await attachLast(createCtx(replies, callbacks, 'Última sesión usada'));
+
+  assert.match(replies.at(-2).text, /No hay sesiones previas en este proyecto/);
+  const confirm = replies.at(-1);
+  assert.match(confirm.text, /Se creó una sesión nueva/);
+  assert.equal(confirm.options.reply_markup.keyboard[0][0].text, 'Projects');
+  assert.equal(setThreadCalls.length, 0);
+  assert.equal(clearThreadCalls.length, 1);
+});
+
+test('volver from project actions returns to projects list', async () => {
+  const replies = [];
+  const callbacks = [];
+  const options = createOptions({
+    replies,
+    callbacks,
+    setThreadCalls: [],
+    clearThreadCalls: [],
+    configUpdates: [],
+  });
+  const bot = options.bot;
+  registerSettingsCommands(options);
+
+  const catchAll = findHearsHandler(bot, '^.+$');
+  const goBack = findHearsHandler(bot, '^volver$');
+  await bot.commands.get('projects')(createCtx(replies, callbacks, '/projects'));
+  const projectLabel = replies.at(-1).options.reply_markup.keyboard[0][0].text;
+
+  await catchAll(createCtx(replies, callbacks, projectLabel), async () => {});
+  await goBack(createCtx(replies, callbacks, 'Volver'));
+
+  const backView = replies.at(-1);
+  assert.match(backView.text, /^Selecciona un proyecto/);
+  assert.equal(backView.options.reply_markup.keyboard.at(-1)[0].text, 'Volver');
 });
 
 test('nueva sesión from /sessions clears current thread and returns main keyboard', async () => {
@@ -343,8 +467,8 @@ test('project selection still works when topic id changes between messages', asy
 
   await catchAll(createCtx(replies, callbacks, projectLabel, 123, 777), async () => {});
 
-  assert.match(replies.at(-1).text, /Se creó una sesión nueva/);
-  assert.equal(replies.at(-1).options.reply_markup.keyboard[0][0].text, 'Projects');
+  assert.match(replies.at(-1).text, /^Proyecto:/);
+  assert.equal(replies.at(-1).options.reply_markup.keyboard[0][0].text, 'Crear una nueva sesión');
 });
 
 test('P#/S# selector without active menu is consumed and does not reach next handler', async () => {

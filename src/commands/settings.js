@@ -16,6 +16,8 @@ const MENU_BTN_PREV = 'Anterior';
 const MENU_BTN_NEXT = 'Siguiente';
 const MENU_BTN_BACK = 'Volver';
 const MENU_BTN_NEW_SESSION = 'Nueva sesión';
+const MENU_BTN_CREATE_PROJECT_SESSION = 'Crear una nueva sesión';
+const MENU_BTN_LAST_PROJECT_SESSION = 'Última sesión usada';
 const MENU_EXPIRED_MESSAGE = 'Este menú expiró o fue reemplazado. Usa /menu.';
 const menuNavCache = new Map();
 const RESERVED_MENU_LABELS = new Set([
@@ -80,6 +82,21 @@ function projectNameFromCwd(cwd) {
   const normalized = String(cwd || '').trim();
   if (!normalized) return '(proyecto desconocido)';
   return path.basename(normalized) || normalized;
+}
+
+function normalizeCwdForMatch(cwd) {
+  try {
+    return path.resolve(String(cwd || '').trim());
+  } catch {
+    return '';
+  }
+}
+
+function sessionBelongsToProject(session, projectCwd) {
+  const target = normalizeCwdForMatch(projectCwd);
+  const candidate = normalizeCwdForMatch(session?.cwd);
+  if (!target || !candidate) return false;
+  return candidate === target || candidate.startsWith(`${target}${path.sep}`);
 }
 
 function buildProjectListFromSessions(sessions) {
@@ -296,6 +313,18 @@ function buildSessionsMenuKeyboard(sessionEntries, page = 0, canCreateNew = true
   };
 }
 
+function buildProjectActionsKeyboard() {
+  return {
+    keyboard: [
+      [{ text: MENU_BTN_CREATE_PROJECT_SESSION }],
+      [{ text: MENU_BTN_LAST_PROJECT_SESSION }],
+      [{ text: MENU_BTN_BACK }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
 function registerSettingsCommands(options) {
   const {
     allowedUsers,
@@ -419,7 +448,7 @@ function registerSettingsCommands(options) {
 
     const paged = getPagedEntries(projectEntries, 0, MENU_PROJECT_PAGE_SIZE);
     await ctx.reply(
-      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems}) · página ${paged.page + 1}/${paged.totalPages}.`,
+      `Selecciona un proyecto (${paged.totalItems}) · página ${paged.page + 1}/${paged.totalPages}.`,
       {
         reply_markup: buildProjectsMenuKeyboard(projectEntries, 0),
       }
@@ -434,11 +463,41 @@ function registerSettingsCommands(options) {
     const paged = getPagedEntries(filtered, page, MENU_PROJECT_PAGE_SIZE);
     const queryPart = state?.query ? ` · filtro: "${state.query}"` : '';
     await ctx.reply(
-      `Selecciona un proyecto para crear sesión nueva (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.`,
+      `Selecciona un proyecto (${paged.totalItems})${queryPart} · página ${paged.page + 1}/${paged.totalPages}.`,
       {
         reply_markup: buildProjectsMenuKeyboard(filtered, paged.page),
       }
     );
+  }
+
+  async function openProjectActionsMenu(ctx, state, selectedEntry) {
+    const chatId = ctx?.chat?.id || ctx?.message?.chat?.id;
+    const topicId = getTopicId(ctx);
+    if (!chatId || !selectedEntry?.project) return;
+
+    const key = menuNavKeyFromIds(chatId, topicId);
+    const selectedProject = selectedEntry.project;
+    menuNavCache.set(key, {
+      createdAt: Date.now(),
+      menuInstanceId: createMenuInstanceId(),
+      level: 'project_actions',
+      selectedProject,
+      projectEntries: Array.isArray(state?.projectEntries) ? state.projectEntries : [],
+      filteredProjectEntries: Array.isArray(state?.filteredProjectEntries)
+        ? state.filteredProjectEntries
+        : Array.isArray(state?.projectEntries)
+          ? state.projectEntries
+          : [],
+      returnProjectsPage: Number(state?.page) || 0,
+      returnProjectsQuery: String(state?.query || ''),
+      returnProjectsMenuInstanceId: String(state?.menuInstanceId || ''),
+      sessionsSnapshot: Array.isArray(state?.sessionsSnapshot) ? state.sessionsSnapshot : [],
+      awaitingSearch: false,
+    });
+
+    await ctx.reply(`Proyecto: ${projectNameFromCwd(selectedProject.cwd)}\n¿Qué quieres hacer?`, {
+      reply_markup: buildProjectActionsKeyboard(),
+    });
   }
 
   function resolveStateCwd(state) {
@@ -705,6 +764,54 @@ function registerSettingsCommands(options) {
         reply_markup: buildMainMenuKeyboard(),
       }
     );
+  }
+
+  async function attachLastSessionForProject(ctx, state) {
+    const selectedProject = state?.selectedProject;
+    const projectCwd = String(selectedProject?.cwd || '').trim();
+    if (!projectCwd) {
+      await ctx.reply('No pude resolver el proyecto. Abre Projects desde /menu.');
+      return;
+    }
+
+    const snapshotCandidates = Array.isArray(state?.sessionsSnapshot)
+      ? state.sessionsSnapshot.filter((session) =>
+          sessionBelongsToProject(session, projectCwd)
+        )
+      : [];
+    const sortedSnapshot = snapshotCandidates.sort((a, b) =>
+      String(b?.timestamp || '').localeCompare(String(a?.timestamp || ''))
+    );
+    let latestSession = sortedSnapshot.find((session) =>
+      isValidSessionId(String(session?.id || '').trim())
+    );
+
+    if (!latestSession) {
+      const freshSessions = await listLocalCodexSessions({
+        limit: MENU_SEARCH_MAX_RESULTS,
+        cwd: projectCwd,
+      });
+      latestSession = freshSessions.find((session) =>
+        isValidSessionId(String(session?.id || '').trim())
+      );
+    }
+
+    if (!latestSession) {
+      await ctx.reply('No hay sesiones previas en este proyecto. Creo una nueva.');
+      await createNewSessionFromState(ctx, {
+        ...state,
+        cwd: projectCwd,
+      });
+      return;
+    }
+
+    await attachSessionFromEntry(ctx, state, {
+      label: '',
+      normalizedLabel: '',
+      selectKey: '',
+      buttonLabel: '',
+      session: latestSession,
+    });
   }
 
   bot.command('thinking', async (ctx) => {
@@ -1033,6 +1140,35 @@ function registerSettingsCommands(options) {
       await openMainMenu(ctx);
       return;
     }
+    if (state.level === 'project_actions') {
+      const previous = {
+        createdAt: Date.now(),
+        menuInstanceId: state.returnProjectsMenuInstanceId || createMenuInstanceId(),
+        level: 'projects',
+        projectEntries: Array.isArray(state.projectEntries) ? state.projectEntries : [],
+        filteredProjectEntries: Array.isArray(state.filteredProjectEntries)
+          ? state.filteredProjectEntries
+          : Array.isArray(state.projectEntries)
+            ? state.projectEntries
+            : [],
+        page: Number(state.returnProjectsPage) || 0,
+        query: String(state.returnProjectsQuery || ''),
+        sessionsSnapshot: Array.isArray(state.sessionsSnapshot) ? state.sessionsSnapshot : [],
+        awaitingSearch: false,
+      };
+      if (!Array.isArray(previous.projectEntries) || !previous.projectEntries.length) {
+        try {
+          await openProjectsMenu(ctx);
+        } catch (err) {
+          console.error(err);
+          await replyWithError(ctx, 'No pude volver a la lista de proyectos.', err);
+        }
+        return;
+      }
+      menuNavCache.set(key, previous);
+      await renderProjectsPage(ctx, previous);
+      return;
+    }
     if (state.level === 'project_sessions') {
       const previous = {
         createdAt: Date.now(),
@@ -1158,6 +1294,32 @@ function registerSettingsCommands(options) {
     await createNewSessionFromState(ctx, state);
   });
 
+  bot.hears(/^crear una nueva sesión$/i, async (ctx) => {
+    if (!canUseSensitiveCommands()) {
+      await denySensitiveCommand(ctx);
+      return;
+    }
+    cleanupMenuNavCache();
+    const chatId = ctx.chat.id;
+    const topicId = getTopicId(ctx);
+    const { state } = resolveMenuStateForChatTopic(chatId, topicId);
+    if (!state || state.level !== 'project_actions') return;
+    await createNewSessionFromState(ctx, state);
+  });
+
+  bot.hears(/^(última|ultima) sesión usada$/i, async (ctx) => {
+    if (!canUseSensitiveCommands()) {
+      await denySensitiveCommand(ctx);
+      return;
+    }
+    cleanupMenuNavCache();
+    const chatId = ctx.chat.id;
+    const topicId = getTopicId(ctx);
+    const { state } = resolveMenuStateForChatTopic(chatId, topicId);
+    if (!state || state.level !== 'project_actions') return;
+    await attachLastSessionForProject(ctx, state);
+  });
+
   bot.hears(/^.+$/, async (ctx, next) => {
     cleanupMenuNavCache();
     const chatId = ctx.chat.id;
@@ -1213,15 +1375,16 @@ function registerSettingsCommands(options) {
         return;
       }
       try {
-        await createNewSessionFromState(ctx, {
-          ...state,
-          selectedProject: selectedEntry.project,
-          cwd: selectedEntry.project.cwd,
-        });
+        await openProjectActionsMenu(ctx, state, selectedEntry);
       } catch (err) {
         console.error(err);
-        await replyWithError(ctx, 'No pude crear la nueva sesión del proyecto.', err);
+        await replyWithError(ctx, 'No pude abrir las acciones del proyecto.', err);
       }
+      return;
+    }
+
+    if (state.level === 'project_actions') {
+      await ctx.reply('Elige una opción del proyecto o pulsa Volver.');
       return;
     }
 

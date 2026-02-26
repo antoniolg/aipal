@@ -50,7 +50,7 @@ Open Telegram, send `/start`, then any message.
 - `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id|reset]`: view/set/reset the model for the current agent (persisted in `config.json`)
 - `/project [path|reset]`: set/reset the working directory used by the agent process
-- `/projects [n]`: list local Codex projects and create a new conversation in the selected project
+- `/projects [n]`: list local Codex projects and choose between starting a new conversation or attaching the latest session for that project
 - `/sessions [n]`: list recent local Codex sessions (filtered by `/project` if set)
 - `/session <id>`: attach a local Codex session to the current chat/topic
 - `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
