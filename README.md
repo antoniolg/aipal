@@ -113,6 +113,7 @@ Optional:
 - `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aipal/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
 - `AIPAL_AGENT_CWD`: project directory used as working directory for agent commands
+- `AIPAL_WHISPER_CMD`: command used for audio transcription (default: `parakeet-mlx`)
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N captured events (default: 20)
 - `AIPAL_MEMORY_RETRIEVAL_LIMIT`: max retrieved memory lines injected per request (default: 8)
 - `ALLOWED_USERS`: comma-separated list of Telegram user IDs allowed to interact with the bot (if unset/empty, bot is open to everyone)
@@ -162,7 +163,7 @@ To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of T
 - Images are downloaded into the image folder and included in the prompt
 
 ## Troubleshooting
-- `ENOENT parakeet-mlx`: install `parakeet-mlx` and ensure it is on PATH.
+- `ENOENT` when transcribing audio: install `parakeet-mlx` and ensure it is on PATH, or set `AIPAL_WHISPER_CMD` to your command.
 - `Error processing response.`: check that `codex` is installed and accessible on PATH.
 - Telegram `ECONNRESET`: usually transient network, retry.
 

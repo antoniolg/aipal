@@ -7,7 +7,7 @@ function readNumberEnv(raw, fallback) {
   return value;
 }
 
-const WHISPER_CMD = 'mlx_whisper';
+const WHISPER_CMD = process.env.AIPAL_WHISPER_CMD || 'parakeet-mlx';
 const WHISPER_TIMEOUT_MS = 300000;
 const WHISPER_MODEL = 'mlx-community/whisper-large-v3-turbo';
 const WHISPER_LANGUAGE = 'es';

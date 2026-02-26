@@ -77,7 +77,7 @@ function registerMediaHandlers(options) {
         if (err && err.code === 'ENOENT') {
           await replyWithError(
             ctx,
-            "I can't find parakeet-mlx. Install it and try again.",
+            "I can't find the transcription command. Install parakeet-mlx or set AIPAL_WHISPER_CMD.",
             err
           );
         } else {
