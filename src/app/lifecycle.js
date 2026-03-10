@@ -8,8 +8,10 @@ function initializeApp(options) {
     setAgentOverrides,
     setCronDefaultChatId,
     setCronScheduler,
+    setOneShotScheduler,
     setThreads,
     startCronScheduler,
+    startOneShotScheduler,
     startDocumentCleanup,
     startImageCleanup,
     startHttpServer,
@@ -51,6 +53,14 @@ function initializeApp(options) {
       } else {
         console.info('Cron scheduler disabled (no cronChatId in config)');
       }
+
+      setOneShotScheduler(
+        startOneShotScheduler({
+          defaultChatId: cronDefaultChatId,
+          onAlert: notifyCronAlert,
+          onTrigger: handleCronTrigger,
+        })
+      );
     })
     .catch((err) => console.warn('Failed to load config settings:', err));
 }
@@ -59,6 +69,7 @@ function installShutdownHooks(options) {
   const {
     bot,
     getCronScheduler,
+    getOneShotScheduler,
     getPersistPromises,
     getQueues,
     shutdownDrainTimeoutMs,
@@ -79,6 +90,15 @@ function installShutdownHooks(options) {
       }
     } catch (err) {
       console.warn('Failed to stop cron scheduler:', err);
+    }
+
+    try {
+      const oneShotScheduler = getOneShotScheduler ? getOneShotScheduler() : null;
+      if (oneShotScheduler && typeof oneShotScheduler.stop === 'function') {
+        oneShotScheduler.stop();
+      }
+    } catch (err) {
+      console.warn('Failed to stop one-shot scheduler:', err);
     }
 
     try {

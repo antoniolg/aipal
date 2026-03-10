@@ -7,6 +7,7 @@ function createMemoryService(options) {
     documentDir,
     extractDocumentTokens,
     extractImageTokens,
+    extractScheduleOnceTokens,
     imageDir,
     memoryCurateEvery,
     memoryPath,
@@ -22,7 +23,11 @@ function createMemoryService(options) {
 
   function extractMemoryText(response) {
     const { cleanedText: withoutImages } = extractImageTokens(response || '', imageDir);
-    const { cleanedText } = extractDocumentTokens(withoutImages, documentDir);
+    const { cleanedText: withoutDocuments } = extractDocumentTokens(
+      withoutImages,
+      documentDir
+    );
+    const { cleanedText } = extractScheduleOnceTokens(withoutDocuments);
     return String(cleanedText || '').trim();
   }
 

@@ -23,6 +23,15 @@ function formatCronAlert(event) {
     ].join('\n');
   }
 
+  if (event.type === 'scheduled_run_dead_letter') {
+    return [
+      `Scheduled run alert: "${event.runId}" moved to DLQ.`,
+      `Scheduled for: ${formatTimestamp(event.run?.runAt)}`,
+      `Attempts: ${event.run?.attempt}/${event.run?.maxAttempts}`,
+      `Last error: ${event.run?.lastError || '(unknown)'}`,
+    ].join('\n');
+  }
+
   return `Cron alert: "${event.jobId}" (${event.type}).`;
 }
 

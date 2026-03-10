@@ -35,3 +35,20 @@ test('formatCronAlert renders missed-schedule alerts', () => {
   assert.match(message, /10:01:00/);
   assert.match(message, /600s/);
 });
+
+test('formatCronAlert renders one-shot dead-letter alerts', () => {
+  const message = formatCronAlert({
+    type: 'scheduled_run_dead_letter',
+    runId: 'once-1',
+    run: {
+      runAt: '2026-03-20T08:30:00.000Z',
+      attempt: 2,
+      maxAttempts: 2,
+      lastError: 'boom',
+    },
+  });
+
+  assert.match(message, /once-1/);
+  assert.match(message, /DLQ/);
+  assert.match(message, /2\/2/);
+});

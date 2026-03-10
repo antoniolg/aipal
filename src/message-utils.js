@@ -283,6 +283,24 @@ function extractDocumentTokens(text, documentDir) {
   return { cleanedText, documentPaths };
 }
 
+function extractScheduleOnceTokens(text) {
+  const schedules = [];
+  const errors = [];
+  const tokenRegex = /\[\[schedule_once:([\s\S]*?)\]\]/g;
+
+  const cleanedText = String(text || '').replace(tokenRegex, (_match, rawJson) => {
+    try {
+      const parsed = JSON.parse(String(rawJson || '').trim());
+      schedules.push(parsed);
+    } catch (err) {
+      errors.push(`Invalid schedule_once token: ${err.message}`);
+    }
+    return '';
+  }).trim();
+
+  return { cleanedText, schedules, errors };
+}
+
 function buildPrompt(
   prompt,
   imagePaths = [],
@@ -328,6 +346,12 @@ function buildPrompt(
         `If you generate a document (or need to send a file), save it under ${documentDir} and reply with [[document:/absolute/path]] so the bot can send it.`
       );
     }
+    lines.push(
+      'If the user asks to schedule a one-time future task/reminder, reply with [[schedule_once:{"runAt":"2026-03-15T09:30:00+01:00","prompt":"What should happen later"}]].'
+    );
+    lines.push(
+      'Use ISO-8601 with an explicit UTC offset in runAt. The prompt must be the exact instruction to execute later. Do not explain the scheduling in prose unless the user explicitly asks for details.'
+    );
   }
   return lines.join('\n');
 }
@@ -347,5 +371,6 @@ module.exports = {
   isPathInside,
   extractImageTokens,
   extractDocumentTokens,
+  extractScheduleOnceTokens,
   buildPrompt,
 };

@@ -39,6 +39,7 @@ function registerTextHandler(options) {
           'memory',
           'reset',
           'cron',
+          'later',
           'help',
           'document_scripts',
         ].includes(normalized)

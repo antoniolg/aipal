@@ -5,13 +5,16 @@ function createTelegramReplyService(options) {
     bot,
     chunkMarkdown,
     chunkText,
+    createScheduledRun,
     documentDir,
     extractDocumentTokens,
     extractImageTokens,
+    extractScheduleOnceTokens,
     formatError,
     imageDir,
     isPathInside,
     markdownToTelegramHtml,
+    resolveEffectiveAgentId,
   } = options;
 
   async function replyWithError(ctx, label, err) {
@@ -35,6 +38,42 @@ function createTelegramReplyService(options) {
     return () => clearInterval(timer);
   }
 
+  function buildScheduleConfirmation(run) {
+    return `Scheduled one-shot run for ${run.runAt} (id: ${run.id}).`;
+  }
+
+  async function materializeScheduledRuns(response, defaults = {}) {
+    const { cleanedText, schedules, errors } = extractScheduleOnceTokens(response || '');
+    if (!createScheduledRun || schedules.length === 0) {
+      return { cleanedText, confirmations: [], errors };
+    }
+
+    const confirmations = [];
+    const failures = errors.slice();
+    for (const schedule of schedules) {
+      try {
+        const run = await createScheduledRun({
+          runAt: schedule.runAt || schedule.run_at,
+          prompt: schedule.prompt,
+          chatId: schedule.chatId ?? schedule.chat_id ?? defaults.chatId ?? null,
+          topicId: schedule.topicId ?? schedule.topic_id ?? defaults.topicId ?? null,
+          agent: schedule.agent || defaults.agentId || null,
+          maxAttempts: schedule.maxAttempts ?? schedule.max_attempts,
+          retryDelaySeconds:
+            schedule.retryDelaySeconds ?? schedule.retry_delay_seconds,
+          retryBackoffFactor:
+            schedule.retryBackoffFactor ?? schedule.retry_backoff_factor,
+          source: 'agent',
+        });
+        confirmations.push(buildScheduleConfirmation(run));
+      } catch (err) {
+        failures.push(`Failed to create scheduled run: ${err.message}`);
+      }
+    }
+
+    return { cleanedText, confirmations, errors: failures };
+  }
+
   async function replyWithResponse(ctx, response) {
     const { cleanedText: afterImages, imagePaths } = extractImageTokens(
       response || '',
@@ -44,7 +83,24 @@ function createTelegramReplyService(options) {
       afterImages,
       documentDir
     );
-    const text = cleanedText.trim();
+    const topicId = ctx?.message?.message_thread_id;
+    const chatId = ctx?.chat?.id;
+    const agentId =
+      typeof resolveEffectiveAgentId === 'function' && chatId
+        ? resolveEffectiveAgentId(chatId, topicId)
+        : null;
+    const scheduleResult = await materializeScheduledRuns(cleanedText, {
+      chatId,
+      topicId,
+      agentId,
+    });
+    const text = [
+      scheduleResult.cleanedText.trim(),
+      ...scheduleResult.confirmations,
+      ...scheduleResult.errors,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     if (text) {
       for (const chunk of chunkMarkdown(text, 3000)) {
         const formatted = markdownToTelegramHtml(chunk) || chunk;
@@ -104,7 +160,7 @@ function createTelegramReplyService(options) {
   }
 
   async function sendResponseToChat(chatId, response, sendOptions = {}) {
-    const { topicId } = sendOptions;
+    const { topicId, agentId } = sendOptions;
     const threadExtra = topicId ? { message_thread_id: topicId } : {};
     const { cleanedText: afterImages, imagePaths } = extractImageTokens(
       response || '',
@@ -114,7 +170,18 @@ function createTelegramReplyService(options) {
       afterImages,
       documentDir
     );
-    const text = cleanedText.trim();
+    const scheduleResult = await materializeScheduledRuns(cleanedText, {
+      chatId,
+      topicId,
+      agentId,
+    });
+    const text = [
+      scheduleResult.cleanedText.trim(),
+      ...scheduleResult.confirmations,
+      ...scheduleResult.errors,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     if (text) {
       for (const chunk of chunkMarkdown(text, 3000)) {
         const formatted = markdownToTelegramHtml(chunk) || chunk;

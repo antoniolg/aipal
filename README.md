@@ -51,6 +51,7 @@ Open Telegram, send `/start`, then any message.
 - `/model [model_id|reset]`: view/set/reset the model for the current agent (persisted in `config.json`)
 - `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
 - `/cron [list|reload|chatid|assign|unassign|run <jobId>|inspect <jobId>]`: manage cron jobs (see below)
+- `/later <ISO-8601 datetime> | <prompt>`: schedule a one-shot future run
 - `/runs [jobId] [n]`: show recent cron executions across jobs
 - `/help`: list available commands and scripts
 - `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)
@@ -99,6 +100,20 @@ Each job can optionally define:
 - `maxAttempts`: max execution attempts before the run is marked failed (default: `3`).
 - `retryDelaySeconds`: base delay before the first retry (default: `30`).
 - `retryBackoffFactor`: multiplier applied to subsequent retry delays (default: `2`).
+
+### One-shot schedules
+For one-time future tasks, use `/later` instead of creating a fake cron:
+
+```text
+/later 2026-03-15T09:30:00+01:00 | Recuérdame revisar la propuesta de AI Expert.
+```
+
+You can also ask the chatbot naturally to schedule something once in the future. When the model decides to do that, the bot will create a persisted one-shot run automatically.
+
+- `/later list`: shows pending one-shot schedules.
+- `/later cancel <runId>`: cancels a pending one-shot schedule.
+
+One-shot schedules are stored in `~/.config/aipal/scheduled-runs.json` (or `$XDG_CONFIG_HOME/aipal/scheduled-runs.json`) and use the same retry/DLQ alert model as cron runs.
 
 ### Images in responses
 If the agent generates an image, save it under the image folder (default: OS temp under `aipal/images`) and reply with:

@@ -20,6 +20,7 @@ function registerHelpCommands(options) {
       '/memory [status|tail|search|curate] - Memory capture + retrieval + curation',
       '/reset - Reset current agent session',
       '/cron [list|reload|chatid|assign|unassign|run|inspect] - Manage cron jobs',
+      '/later <ISO> | <prompt> - Schedule a one-shot future run',
       '/runs [jobId] [n] - Show recent cron executions',
       '/help - Show this help',
       '/document_scripts confirm - Auto-document available scripts (requires ALLOWED_USERS)',

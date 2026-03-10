@@ -1,4 +1,4 @@
-# Configuration (config.json + soul.md + tools.md + memory.md + cron.json + cron-state.json + memory state)
+# Configuration (config.json + soul.md + tools.md + memory.md + cron.json + cron-state.json + scheduled-runs.json + memory state)
 
 This bot stores a minimal JSON config with the values set by `/agent`.
 
@@ -134,3 +134,34 @@ Scheduler runtime state is stored separately in:
 - If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/cron-state.json`
 
 This file keeps the last scheduled slot, pending retries, a short recent run history, DLQ entries, missed-schedule alert markers, and the latest success/failure timestamps for each job so the scheduler can recover after restarts, avoid duplicate alerts, and power `/runs` / `/cron inspect`.
+
+## One-shot schedules file
+One-time future runs created via `/later` or by the chatbot are stored in:
+- `~/.config/aipal/scheduled-runs.json`
+- If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/scheduled-runs.json`
+
+Schema:
+```json
+{
+  "runs": [
+    {
+      "id": "once-123",
+      "runAt": "2026-03-15T08:30:00.000Z",
+      "runAfter": "2026-03-15T08:30:00.000Z",
+      "prompt": "Recuérdame revisar la propuesta de AI Expert.",
+      "chatId": -1001234567890,
+      "topicId": 42,
+      "agent": "codex",
+      "status": "pending",
+      "attempt": 0,
+      "maxAttempts": 3,
+      "retryDelaySeconds": 30,
+      "retryBackoffFactor": 2
+    }
+  ]
+}
+```
+
+Notes:
+- One-shot schedules use the same execution pipeline and retry policy style as cron runs.
+- `status` transitions through `pending` -> `running` / `retry_scheduled` -> `succeeded` or `dead_letter`.

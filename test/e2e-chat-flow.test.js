@@ -127,13 +127,20 @@ test('e2e: text handler runs bootstrap + agent + telegram reply with thread cont
     bot: { telegram: {} },
     chunkMarkdown,
     chunkText,
+    createScheduledRun: async () => null,
     documentDir,
     extractDocumentTokens: (value) => ({ cleanedText: String(value || ''), documentPaths: [] }),
     extractImageTokens: (value) => ({ cleanedText: String(value || ''), imagePaths: [] }),
+    extractScheduleOnceTokens: (value) => ({
+      cleanedText: String(value || ''),
+      schedules: [],
+      errors: [],
+    }),
     formatError,
     imageDir,
     isPathInside: () => true,
     markdownToTelegramHtml,
+    resolveEffectiveAgentId: () => 'fake',
   });
 
   registerTextHandler({

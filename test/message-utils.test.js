@@ -7,6 +7,7 @@ const test = require('node:test');
 const {
   extractImageTokens,
   extractDocumentTokens,
+  extractScheduleOnceTokens,
   isPathInside,
   buildPrompt,
   parseSlashCommand,
@@ -38,6 +39,15 @@ test('extractDocumentTokens keeps only documents inside DOCUMENT_DIR', () => {
     inside,
     path.join(baseDir, 'relative.pdf'),
   ].sort());
+});
+
+test('extractScheduleOnceTokens parses schedule payloads and strips tokens', () => {
+  const text = 'hello [[schedule_once:{"runAt":"2026-03-20T09:30:00+01:00","prompt":"Ping"}]] world';
+  const { cleanedText, schedules, errors } = extractScheduleOnceTokens(text);
+  assert.equal(cleanedText, 'hello  world');
+  assert.equal(errors.length, 0);
+  assert.equal(schedules.length, 1);
+  assert.equal(schedules[0].prompt, 'Ping');
 });
 
 test('isPathInside detects containment', () => {
@@ -83,6 +93,7 @@ test('buildPrompt includes image hints', () => {
   assert.match(prompt, /User sent image file/);
   assert.match(prompt, /\[\[image:\/absolute\/path\]\]/);
   assert.match(prompt, /\[\[document:\/absolute\/path\]\]/);
+  assert.match(prompt, /\[\[schedule_once:/);
 });
 
 test('buildPrompt includes slash context', () => {

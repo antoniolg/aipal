@@ -65,7 +65,10 @@ function createCronHandler(options) {
           console.info(`Cron job ${jobId}: ${matchedToken} (silent)`);
           return { ok: true, response, silent: true };
         }
-        await sendResponseToChat(chatId, response, { topicId });
+        await sendResponseToChat(chatId, response, {
+          topicId,
+          agentId: effectiveAgentId,
+        });
         return { ok: true, response, silent: false };
       } catch (err) {
         console.error(`Cron job ${jobId} failed:`, err);

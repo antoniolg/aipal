@@ -66,6 +66,7 @@ const {
   isPathInside,
   extractImageTokens,
   extractDocumentTokens,
+  extractScheduleOnceTokens,
   chunkMarkdown,
   markdownToTelegramHtml,
   buildPrompt,
@@ -117,11 +118,19 @@ const {
   formatRunsMessage,
   listRecentRuns,
 } = require('./services/cron-observability');
+const {
+  cancelScheduledRun,
+  createScheduledRun,
+  formatScheduledRun,
+  listScheduledRuns: listScheduledRunsFile,
+  loadScheduledRuns,
+} = require('./services/scheduled-runs');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
 const { createHttpServerService } = require('./services/http-server');
+const { startOneShotScheduler } = require('./one-shot-scheduler');
 const { bootstrapApp } = require('./app/bootstrap');
 const { initializeApp, installShutdownHooks } = require('./app/lifecycle');
 const { registerCommands } = require('./app/register-commands');
@@ -166,6 +175,7 @@ let globalThinking;
 let globalAgent = AGENT_CODEX;
 let globalModels = {};
 let cronDefaultChatId = null;
+let oneShotScheduler = null;
 const enqueue = createEnqueue(queues);
 
 const scriptManager = new ScriptManager(SCRIPTS_DIR);
@@ -211,6 +221,7 @@ const memoryService = createMemoryService({
   documentDir: DOCUMENT_DIR,
   extractDocumentTokens,
   extractImageTokens,
+  extractScheduleOnceTokens,
   imageDir: IMAGE_DIR,
   memoryCurateEvery: MEMORY_CURATE_EVERY,
   memoryPath: MEMORY_PATH,
@@ -259,13 +270,16 @@ const telegramReplyService = createTelegramReplyService({
   bot,
   chunkMarkdown,
   chunkText,
+  createScheduledRun,
   documentDir: DOCUMENT_DIR,
   extractDocumentTokens,
   extractImageTokens,
+  extractScheduleOnceTokens,
   formatError,
   imageDir: IMAGE_DIR,
   isPathInside,
   markdownToTelegramHtml,
+  resolveEffectiveAgentId,
 });
 const {
   replyWithError,
@@ -367,6 +381,7 @@ registerCommands({
   buildCronInspection,
   buildMemoryThreadKey,
   buildTopicKey,
+  cancelScheduledRun,
   clearAgentOverride: (chatId, topicId) =>
     clearAgentOverride(agentOverrides, chatId, topicId),
   clearModelOverride,
@@ -377,6 +392,7 @@ registerCommands({
   execLocal,
   extractCommandValue,
   formatCronInspection,
+  formatScheduledRun,
   formatRunsMessage,
   getAgent,
   getAgentLabel,
@@ -384,6 +400,7 @@ registerCommands({
     getAgentOverride(agentOverrides, chatId, topicId),
   getCronDefaultChatId: () => cronDefaultChatId,
   getCronScheduler: () => cronScheduler,
+  getOneShotScheduler: () => oneShotScheduler,
   getGlobalAgent: () => globalAgent,
   getGlobalModels: () => globalModels,
   getGlobalThinking: () => globalThinking,
@@ -395,7 +412,9 @@ registerCommands({
   isModelResetCommand,
   loadCronJobs,
   loadCronState,
+  loadScheduledRuns,
   listRecentRuns,
+  listScheduledRuns: listScheduledRunsFile,
   markdownToTelegramHtml,
   memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
   normalizeAgent,
@@ -405,6 +424,7 @@ registerCommands({
   persistThreads,
   replyWithError,
   resolveEffectiveAgentId,
+  createScheduledRun,
   saveCronJobs,
   scriptManager,
   searchMemory,
@@ -463,9 +483,9 @@ bootstrapApp({
   bot,
   initializeApp: () =>
     initializeApp({
-  handleCronTrigger,
-  notifyCronAlert,
-  hydrateGlobalSettings,
+      handleCronTrigger,
+      notifyCronAlert,
+      hydrateGlobalSettings,
       loadAgentOverrides,
       loadThreads,
       setAgentOverrides: (value) => {
@@ -477,10 +497,14 @@ bootstrapApp({
       setCronScheduler: (value) => {
         cronScheduler = value;
       },
+      setOneShotScheduler: (value) => {
+        oneShotScheduler = value;
+      },
       setThreads: (value) => {
         threads = value;
       },
       startCronScheduler,
+      startOneShotScheduler,
       startDocumentCleanup,
       startImageCleanup,
       startHttpServer: httpServerService.start,
@@ -489,6 +513,7 @@ bootstrapApp({
     installShutdownHooks({
       bot,
       getCronScheduler: () => cronScheduler,
+      getOneShotScheduler: () => oneShotScheduler,
       getPersistPromises: () => [threadsPersist, agentOverridesPersist, memoryPersist],
       getQueues: () => queues,
       shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
