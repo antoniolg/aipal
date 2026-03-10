@@ -1,6 +1,7 @@
 function initializeApp(options) {
   const {
     handleCronTrigger,
+    notifyCronAlert,
     hydrateGlobalSettings,
     loadAgentOverrides,
     loadThreads,
@@ -43,6 +44,7 @@ function initializeApp(options) {
         setCronScheduler(
           startCronScheduler({
             chatId: cronDefaultChatId,
+            onAlert: notifyCronAlert,
             onTrigger: handleCronTrigger,
           })
         );

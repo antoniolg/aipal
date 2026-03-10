@@ -50,7 +50,8 @@ Open Telegram, send `/start`, then any message.
 - `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id|reset]`: view/set/reset the model for the current agent (persisted in `config.json`)
 - `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
-- `/cron [list|reload|chatid|assign|unassign|run <jobId>]`: manage cron jobs (see below)
+- `/cron [list|reload|chatid|assign|unassign|run <jobId>|inspect <jobId>]`: manage cron jobs (see below)
+- `/runs [jobId] [n]`: show recent cron executions across jobs
 - `/help`: list available commands and scripts
 - `/document_scripts confirm`: generate short descriptions for scripts (writes `scripts.json`; requires `ALLOWED_USERS`)
 - `/<script> [args]`: run an executable script from `~/.config/aipal/scripts`
@@ -83,10 +84,21 @@ Aipal supports Telegram Topics. Sessions and agent overrides are kept per-topic.
 ### Cron jobs
 Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).
 
+The scheduler keeps durable execution state in `~/.config/aipal/cron-state.json`, so pending retries and recent execution metadata survive process restarts.
+It also sends Telegram alerts when runs enter DLQ or when old schedule slots fall outside the configured catch-up window.
+
 - `/cron chatid`: prints your chat ID (use this value as `cronChatId`).
 - `/cron list`: lists configured jobs.
 - `/cron reload`: reloads `cron.json` without restarting the bot.
 - `/cron run <jobId>`: triggers one job immediately using its configured target chat/topic.
+- `/cron inspect <jobId>`: shows current scheduler state, lag, recent attempts, and next scheduled slots.
+- `/runs [jobId] [n]`: shows the latest persisted cron attempts, including retries and failures.
+
+Each job can optionally define:
+- `catchupWindowSeconds`: how far back the scheduler should recover missed slots after downtime (default: `600`).
+- `maxAttempts`: max execution attempts before the run is marked failed (default: `3`).
+- `retryDelaySeconds`: base delay before the first retry (default: `30`).
+- `retryBackoffFactor`: multiplier applied to subsequent retry delays (default: `2`).
 
 ### Images in responses
 If the agent generates an image, save it under the image folder (default: OS temp under `aipal/images`) and reply with:

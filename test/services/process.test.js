@@ -34,7 +34,7 @@ test('process.js service', async (t) => {
 
     await t.test('execLocal rejects with error containing stdout/stderr on failure', async () => {
         const fakeError = new Error('Command failed');
-        mock.method(cp, 'execFile', (cmd, args, opts, cb) => {
+        mock.method(cp, 'execFile', (_cmd, _args, _opts, cb) => {
             cb(fakeError, 'some output', 'some error');
         });
 
@@ -53,7 +53,7 @@ test('process.js service', async (t) => {
         const fakeError = new Error('Command failed');
         fakeError.killed = true; // Indicates it was killed (e.g. by timeout wrapper)
 
-        mock.method(cp, 'execFile', (cmd, args, opts, cb) => {
+        mock.method(cp, 'execFile', (_cmd, _args, _opts, cb) => {
             cb(fakeError, 'partial out', 'partial err');
         });
 

@@ -48,6 +48,7 @@ const {
 } = require('./memory-retrieval');
 const {
   loadCronJobs,
+  loadCronState,
   saveCronJobs,
   buildCronTriggerPayload,
   startCronScheduler,
@@ -108,7 +109,14 @@ const { createAppState } = require('./app/state');
 const { execLocal, shellQuote, wrapCommandWithPty } = require('./services/process');
 const { createEnqueue } = require('./services/queue');
 const { createAgentRunner } = require('./services/agent-runner');
+const { createCronAlertNotifier } = require('./services/cron-alerts');
 const { createCronHandler } = require('./services/cron-handler');
+const {
+  buildCronInspection,
+  formatCronInspection,
+  formatRunsMessage,
+  listRecentRuns,
+} = require('./services/cron-observability');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createScriptService } = require('./services/scripts');
@@ -290,13 +298,16 @@ const httpServerService = createHttpServerService({
 
 const handleCronTrigger = createCronHandler({
   bot,
+  buildTopicKey,
   buildMemoryThreadKey,
   captureMemoryEvent,
+  enqueue,
   extractMemoryText,
   resolveEffectiveAgentId,
   runAgentForChat,
   sendResponseToChat,
 });
+const notifyCronAlert = createCronAlertNotifier({ bot });
 
 bot.catch((err) => {
   console.error('Bot error', err);
@@ -353,6 +364,7 @@ registerCommands({
   allowedUsers,
   bot,
   buildCronTriggerPayload,
+  buildCronInspection,
   buildMemoryThreadKey,
   buildTopicKey,
   clearAgentOverride: (chatId, topicId) =>
@@ -364,6 +376,8 @@ registerCommands({
   enqueue,
   execLocal,
   extractCommandValue,
+  formatCronInspection,
+  formatRunsMessage,
   getAgent,
   getAgentLabel,
   getAgentOverride: (chatId, topicId) =>
@@ -380,6 +394,8 @@ registerCommands({
   isKnownAgent,
   isModelResetCommand,
   loadCronJobs,
+  loadCronState,
+  listRecentRuns,
   markdownToTelegramHtml,
   memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
   normalizeAgent,
@@ -447,8 +463,9 @@ bootstrapApp({
   bot,
   initializeApp: () =>
     initializeApp({
-      handleCronTrigger,
-      hydrateGlobalSettings,
+  handleCronTrigger,
+  notifyCronAlert,
+  hydrateGlobalSettings,
       loadAgentOverrides,
       loadThreads,
       setAgentOverrides: (value) => {

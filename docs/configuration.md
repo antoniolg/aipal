@@ -1,4 +1,4 @@
-# Configuration (config.json + soul.md + tools.md + memory.md + cron.json + memory state)
+# Configuration (config.json + soul.md + tools.md + memory.md + cron.json + cron-state.json + memory state)
 
 This bot stores a minimal JSON config with the values set by `/agent`.
 
@@ -106,3 +106,31 @@ Schema:
 Notes:
 - Jobs are only scheduled when `cronChatId` is set in `config.json`.
 - Use `/cron reload` after editing `cron.json` to apply changes without restarting the bot.
+- Missed slots are materialized during the next scheduler tick, capped by each job's `catchupWindowSeconds` (default: `600`).
+- Failed runs are retried with exponential backoff using `maxAttempts`, `retryDelaySeconds`, and `retryBackoffFactor`.
+
+Optional per-job fields:
+```json
+{
+  "jobs": [
+    {
+      "id": "daily-summary",
+      "enabled": true,
+      "cron": "0 9 * * *",
+      "timezone": "Europe/Madrid",
+      "prompt": "Dame un resumen del día con mis tareas pendientes.",
+      "catchupWindowSeconds": 600,
+      "maxAttempts": 3,
+      "retryDelaySeconds": 30,
+      "retryBackoffFactor": 2
+    }
+  ]
+}
+```
+
+## Cron state file
+Scheduler runtime state is stored separately in:
+- `~/.config/aipal/cron-state.json`
+- If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/cron-state.json`
+
+This file keeps the last scheduled slot, pending retries, a short recent run history, DLQ entries, missed-schedule alert markers, and the latest success/failure timestamps for each job so the scheduler can recover after restarts, avoid duplicate alerts, and power `/runs` / `/cron inspect`.

@@ -2,12 +2,15 @@ function registerCronCommand(options) {
   const {
     bot,
     buildCronTriggerPayload,
+    buildCronInspection,
     extractCommandValue,
+    formatCronInspection,
     getCronDefaultChatId,
     getCronScheduler,
     getTopicId,
     handleCronTrigger,
     loadCronJobs,
+    loadCronState,
     replyWithError,
     saveCronJobs,
   } = options;
@@ -127,10 +130,39 @@ function registerCronCommand(options) {
         await ctx.reply(
           `Running cron "${job.id}" now -> chat ${payload.chatId}${topicLabel}${disabledLabel}`
         );
-        await handleCronTrigger(payload.chatId, payload.prompt, payload.options);
+        const result = await handleCronTrigger(
+          payload.chatId,
+          payload.prompt,
+          payload.options
+        );
+        if (result && result.ok === false) {
+          await ctx.reply(`Cron "${job.id}" failed.`);
+          return;
+        }
         await ctx.reply(`Cron "${job.id}" finished.`);
       } catch (err) {
         await replyWithError(ctx, 'Failed to run cron job.', err);
+      }
+      return;
+    }
+
+    if (subcommand === 'inspect') {
+      const jobId = parts[1];
+      if (!jobId) {
+        await ctx.reply('Usage: /cron inspect <jobId>');
+        return;
+      }
+      try {
+        const [jobs, cronState] = await Promise.all([loadCronJobs(), loadCronState()]);
+        const job = jobs.find((item) => item.id === jobId);
+        if (!job) {
+          await ctx.reply(`Cron job "${jobId}" not found.`);
+          return;
+        }
+        const inspection = buildCronInspection({ job, cronState });
+        await ctx.reply(formatCronInspection(inspection));
+      } catch (err) {
+        await replyWithError(ctx, 'Failed to inspect cron job.', err);
       }
       return;
     }
@@ -153,7 +185,7 @@ function registerCronCommand(options) {
       return;
     }
 
-    await ctx.reply('Usage: /cron [list|reload|chatid|assign|unassign|run]');
+    await ctx.reply('Usage: /cron [list|reload|chatid|assign|unassign|run|inspect]');
   });
 }
 
