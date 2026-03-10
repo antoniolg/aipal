@@ -10,5 +10,3 @@ Style:
 
 - Offer to help with next step.
 - Ask when needed.
-
-Notes:
