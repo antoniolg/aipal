@@ -200,6 +200,15 @@ function createAgentRunner(options) {
     let streamedFinalText;
     let streamedFinalDelivered = false;
     let lastProgressFingerprint = '';
+    const emitProgressLines = (lines) => {
+      if (typeof onProgressUpdate !== 'function' || !Array.isArray(lines)) return;
+      const fingerprint = lines.join('\n');
+      if (!fingerprint || fingerprint === lastProgressFingerprint) return;
+      lastProgressFingerprint = fingerprint;
+      Promise.resolve(onProgressUpdate(lines)).catch((err) => {
+        console.warn('Failed to stream agent progress update:', err);
+      });
+    };
     const canStreamFinal =
       (typeof onFinalResponse === 'function' || typeof onProgressUpdate === 'function')
       && typeof execLocalStreaming === 'function'
@@ -220,13 +229,8 @@ function createAgentRunner(options) {
               && Array.isArray(partial.commentaryMessages)
             ) {
               const fingerprint = partial.commentaryMessages.join('\n');
-              if (fingerprint && fingerprint !== lastProgressFingerprint) {
-                lastProgressFingerprint = fingerprint;
-                Promise.resolve(onProgressUpdate(partial.commentaryMessages)).catch(
-                  (err) => {
-                    console.warn('Failed to stream agent progress update:', err);
-                  }
-                );
+              if (fingerprint) {
+                emitProgressLines(partial.commentaryMessages);
               }
             }
             if (

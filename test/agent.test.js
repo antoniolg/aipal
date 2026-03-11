@@ -69,6 +69,93 @@ test('parseStreamingOutput only emits codex final channel messages', () => {
   assert.deepEqual(parsed.commentaryMessages, ['comentario']);
 });
 
+test('parseAgentOutput understands Codex session response_item phases', () => {
+  const agent = getAgent('codex');
+  const output = [
+    JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text: 'voy a revisar esto' }],
+      },
+    }),
+    JSON.stringify({
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        phase: 'final_answer',
+        content: [{ type: 'output_text', text: 'resultado final' }],
+      },
+    }),
+  ].join('\n');
+
+  const parsed = agent.parseOutput(output);
+  assert.equal(parsed.text, 'resultado final');
+});
+
+test('parseStreamingOutput understands Codex event_msg agent_message phases', () => {
+  const agent = getAgent('codex');
+  const output = [
+    JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'agent_message',
+        phase: 'commentary',
+        message: 'comprobando estado',
+      },
+    }),
+    JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'agent_message',
+        phase: 'final_answer',
+        message: 'hecho',
+      },
+    }),
+  ].join('\n');
+
+  const parsed = agent.parseStreamingOutput(output);
+  assert.equal(parsed.sawFinal, true);
+  assert.equal(parsed.text, 'hecho');
+  assert.deepEqual(parsed.commentaryMessages, ['comprobando estado']);
+});
+
+test('parseStreamingOutput infers commentary and final from agent_message stream', () => {
+  const agent = getAgent('codex');
+  const output = [
+    JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_0', type: 'agent_message', text: 'Voy a comprobar algo' },
+    }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { id: 'item_1', type: 'agent_message', text: 'Sigo mirando el repo' },
+    }),
+    JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
+  ].join('\n');
+
+  const parsed = agent.parseStreamingOutput(output);
+  assert.equal(parsed.sawFinal, true);
+  assert.equal(parsed.text, 'Sigo mirando el repo');
+  assert.deepEqual(parsed.commentaryMessages, ['Voy a comprobar algo']);
+});
+
+test('parseStreamingOutput keeps live agent_message entries as commentary before turn completion', () => {
+  const agent = getAgent('codex');
+  const output = JSON.stringify({
+    type: 'item.completed',
+    item: { id: 'item_0', type: 'agent_message', text: 'Voy a comprobar algo' },
+  });
+
+  const parsed = agent.parseStreamingOutput(output);
+  assert.equal(parsed.sawFinal, false);
+  assert.equal(parsed.text, '');
+  assert.deepEqual(parsed.commentaryMessages, ['Voy a comprobar algo']);
+});
+
 test('parseAgentOutput falls back to last codex message when no channel exists', () => {
   const agent = getAgent('codex');
   const output = [

@@ -44,7 +44,7 @@ function createTelegramReplyService(options) {
       : [];
     if (items.length === 0) return '';
     const recent = items.slice(-4);
-    return ['Pensando...', '', ...recent.map((line) => `• ${line}`)].join('\n');
+    return ['Thinking...', '', ...recent.map((line) => `• ${line}`)].join('\n');
   }
 
   function createProgressReporter(transport) {

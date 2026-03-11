@@ -7,6 +7,14 @@ function readNumberEnv(raw, fallback) {
   return value;
 }
 
+function readBooleanEnv(raw, fallback = false) {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 const WHISPER_CMD = 'mlx_whisper';
 const WHISPER_TIMEOUT_MS = 300000;
 const WHISPER_MODEL = 'mlx-community/whisper-large-v3-turbo';
@@ -78,5 +86,6 @@ module.exports = {
   WHISPER_LANGUAGE,
   WHISPER_MODEL,
   WHISPER_TIMEOUT_MS,
+  readBooleanEnv,
   readNumberEnv,
 };

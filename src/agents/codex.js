@@ -27,6 +27,38 @@ function buildCommand({ prompt, promptExpression, threadId, model, thinking }) {
   return `${CODEX_CMD} exec ${args} ${promptValue}`.trim();
 }
 
+function extractTextFromMessagePayload(message) {
+  if (!message || typeof message !== 'object') return '';
+  if (typeof message.text === 'string') return message.text;
+
+  const content = Array.isArray(message.content) ? message.content : [];
+  const textParts = content
+    .map((part) => {
+      if (!part || typeof part !== 'object') return '';
+      if (typeof part.text === 'string') return part.text;
+      if (typeof part.output_text === 'string') return part.output_text;
+      if (typeof part.input_text === 'string') return part.input_text;
+      return '';
+    })
+    .filter(Boolean);
+
+  return textParts.join('\n').trim();
+}
+
+function pushMessageByPhase({ text, phase, allMessages, finalMessages, commentaryMessages }) {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) return;
+
+  allMessages.push(normalizedText);
+
+  const normalizedPhase = String(phase || '').toLowerCase();
+  if (normalizedPhase === 'final' || normalizedPhase === 'final_answer') {
+    finalMessages.push(normalizedText);
+  } else if (normalizedPhase === 'commentary') {
+    commentaryMessages.push(normalizedText);
+  }
+}
+
 function collectMessages(output) {
   const lines = String(output || '').split(/\r?\n/);
   let threadId;
@@ -34,6 +66,8 @@ function collectMessages(output) {
   const finalMessages = [];
   const commentaryMessages = [];
   let sawJson = false;
+  let sawTurnCompleted = false;
+  let sawExplicitFinal = false;
   let buffer = '';
   for (const line of lines) {
     if (!buffer) {
@@ -56,27 +90,86 @@ function collectMessages(output) {
       threadId = payload.thread_id;
       continue;
     }
+    if (payload.type === 'turn.completed') {
+      sawTurnCompleted = true;
+      continue;
+    }
     if (payload.type === 'item.completed' && payload.item && typeof payload.item.text === 'string') {
       const itemType = String(payload.item.type || '');
       if (itemType.includes('message')) {
-        const text = String(payload.item.text || '');
-        if (!text.trim()) continue;
-        allMessages.push(text);
         const channel = String(
           payload.item.channel ||
             payload.item.message?.channel ||
             payload.item.metadata?.channel ||
             ''
         ).toLowerCase();
-        if (channel === 'final') {
-          finalMessages.push(text);
-        } else if (channel === 'commentary') {
-          commentaryMessages.push(text);
+        if (channel) {
+          pushMessageByPhase({
+            text: payload.item.text,
+            phase: channel,
+            allMessages,
+            finalMessages,
+            commentaryMessages,
+          });
+          if (channel === 'final') {
+            sawExplicitFinal = true;
+          }
+        } else {
+          const text = String(payload.item.text || '').trim();
+          if (text) {
+            allMessages.push(text);
+          }
         }
       }
+      continue;
+    }
+
+    if (payload.type === 'response_item' && payload.payload?.type === 'message') {
+      if (String(payload.payload.phase || '').toLowerCase() === 'final_answer') {
+        sawExplicitFinal = true;
+      }
+      pushMessageByPhase({
+        text: extractTextFromMessagePayload(payload.payload),
+        phase: payload.payload.phase,
+        allMessages,
+        finalMessages,
+        commentaryMessages,
+      });
+      continue;
+    }
+
+    if (payload.type === 'event_msg' && payload.payload?.type === 'agent_message') {
+      if (String(payload.payload.phase || '').toLowerCase() === 'final_answer') {
+        sawExplicitFinal = true;
+      }
+      pushMessageByPhase({
+        text: payload.payload.message,
+        phase: payload.payload.phase,
+        allMessages,
+        finalMessages,
+        commentaryMessages,
+      });
     }
   }
-  return { threadId, allMessages, finalMessages, commentaryMessages, sawJson };
+
+  if (finalMessages.length === 0 && allMessages.length > 0) {
+    if (sawTurnCompleted) {
+      finalMessages.push(allMessages[allMessages.length - 1]);
+      commentaryMessages.splice(0, commentaryMessages.length, ...allMessages.slice(0, -1));
+    } else {
+      commentaryMessages.splice(0, commentaryMessages.length, ...allMessages);
+    }
+  }
+
+  return {
+    threadId,
+    allMessages,
+    finalMessages,
+    commentaryMessages,
+    sawJson,
+    sawTurnCompleted,
+    sawExplicitFinal,
+  };
 }
 
 function parseOutput(output) {
@@ -87,7 +180,14 @@ function parseOutput(output) {
 }
 
 function parseStreamingOutput(output) {
-  const { threadId, finalMessages, commentaryMessages, sawJson } = collectMessages(output);
+  const {
+    threadId,
+    finalMessages,
+    commentaryMessages,
+    sawJson,
+    sawTurnCompleted,
+    sawExplicitFinal,
+  } = collectMessages(output);
   const text = finalMessages.length > 0
     ? String(finalMessages[finalMessages.length - 1] || '').trim()
     : '';
@@ -95,7 +195,7 @@ function parseStreamingOutput(output) {
     text,
     threadId,
     sawJson,
-    sawFinal: finalMessages.length > 0,
+    sawFinal: sawExplicitFinal || (finalMessages.length > 0 && sawTurnCompleted),
     commentaryMessages,
   };
 }
