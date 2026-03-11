@@ -94,6 +94,8 @@ test('buildPrompt includes image hints', () => {
   assert.match(prompt, /\[\[image:\/absolute\/path\]\]/);
   assert.match(prompt, /\[\[document:\/absolute\/path\]\]/);
   assert.match(prompt, /\[\[schedule_once:/);
+  assert.match(prompt, /Current local time reference:/);
+  assert.match(prompt, /default timezone: Europe\/Madrid/);
 });
 
 test('buildPrompt includes slash context', () => {
@@ -102,6 +104,25 @@ test('buildPrompt includes slash context', () => {
   const prompt = buildPrompt('hello', [], baseDir, '/inbox output:\n1) foo', [], docDir);
   assert.match(prompt, /Context from last slash command output/);
   assert.match(prompt, /\/inbox output/);
+});
+
+test('buildPrompt includes scheduling guidance for ambiguous future requests', () => {
+  const prompt = buildPrompt(
+    'recuérdamelo mañana',
+    [],
+    '/tmp/aipal/images',
+    '',
+    [],
+    '/tmp/aipal/documents',
+    {
+      currentDate: new Date('2026-03-10T08:00:00.000Z'),
+      defaultTimeZone: 'Europe/Madrid',
+    }
+  );
+
+  assert.match(prompt, /Prefer schedule_once for one-time future tasks/);
+  assert.match(prompt, /Resolve relative dates like/);
+  assert.match(prompt, /ask one concise clarification/);
 });
 
 test('parseSlashCommand parses args', () => {

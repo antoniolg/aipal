@@ -311,9 +311,15 @@ function buildPrompt(
   options = {}
 ) {
   const includeFileInstructions = options.includeFileInstructions !== false;
+  const defaultTimeZone = options.defaultTimeZone || 'Europe/Madrid';
+  const currentDate =
+    options.currentDate instanceof Date ? options.currentDate : new Date();
   const lines = [];
   lines.push(
     'Output style for Telegram: reply only with the final user-facing answer. Do not include reasoning, chain-of-thought, planning steps, or internal process.'
+  );
+  lines.push(
+    `Current local time reference: ${currentDate.toISOString()} (default timezone: ${defaultTimeZone}).`
   );
   const context = (scriptContext || '').trim();
   if (context) {
@@ -350,7 +356,16 @@ function buildPrompt(
       'If the user asks to schedule a one-time future task/reminder, reply with [[schedule_once:{"runAt":"2026-03-15T09:30:00+01:00","prompt":"What should happen later"}]].'
     );
     lines.push(
-      'Use ISO-8601 with an explicit UTC offset in runAt. The prompt must be the exact instruction to execute later. Do not explain the scheduling in prose unless the user explicitly asks for details.'
+      'Prefer schedule_once for one-time future tasks. Do not create a cron for something that should happen only once.'
+    );
+    lines.push(
+      'Use ISO-8601 with an explicit UTC offset in runAt. Resolve relative dates like "mañana", "esta tarde", or "el próximo lunes" using the current local time reference and the default timezone.'
+    );
+    lines.push(
+      'If the request is ambiguous and a reliable one-shot schedule cannot be inferred, ask one concise clarification instead of scheduling anything.'
+    );
+    lines.push(
+      'The prompt must be the exact instruction to execute later. Do not explain the scheduling in prose unless the user explicitly asks for details.'
     );
   }
   return lines.join('\n');
