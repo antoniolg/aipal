@@ -4,6 +4,7 @@ function registerMediaHandlers(options) {
     buildMemoryThreadKey,
     buildTopicKey,
     captureMemoryEvent,
+    createReplyProgressReporter,
     documentDir,
     downloadTelegramFile,
     extractMemoryText,
@@ -32,6 +33,10 @@ function registerMediaHandlers(options) {
 
     enqueue(topicKey, async () => {
       const stopTyping = startTyping(ctx);
+      const progressReporter =
+        typeof createReplyProgressReporter === 'function'
+          ? createReplyProgressReporter(ctx)
+          : null;
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -61,7 +66,20 @@ function registerMediaHandlers(options) {
           kind: 'audio',
           text,
         });
-        const response = await runAgentForChat(chatId, text, { topicId });
+        let responseSent = false;
+        const response = await runAgentForChat(chatId, text, {
+          topicId,
+          onProgressUpdate: async (lines) => {
+            if (!progressReporter) return;
+            await progressReporter.update(lines);
+          },
+          onFinalResponse: async (partialResponse) => {
+            if (responseSent) return;
+            responseSent = true;
+            stopTyping();
+            await replyWithResponse(ctx, partialResponse);
+          },
+        });
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
           chatId,
@@ -71,7 +89,9 @@ function registerMediaHandlers(options) {
           kind: 'text',
           text: extractMemoryText(response),
         });
-        await replyWithResponse(ctx, response);
+        if (!responseSent) {
+          await replyWithResponse(ctx, response);
+        }
       } catch (err) {
         console.error(err);
         if (err && err.code === 'ENOENT') {
@@ -85,6 +105,7 @@ function registerMediaHandlers(options) {
         }
       } finally {
         stopTyping();
+        await progressReporter?.finish();
         await safeUnlink(audioPath);
         await safeUnlink(transcriptPath);
       }
@@ -100,6 +121,10 @@ function registerMediaHandlers(options) {
 
     enqueue(topicKey, async () => {
       const stopTyping = startTyping(ctx);
+      const progressReporter =
+        typeof createReplyProgressReporter === 'function'
+          ? createReplyProgressReporter(ctx)
+          : null;
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -124,9 +149,20 @@ function registerMediaHandlers(options) {
           kind: 'image',
           text: prompt,
         });
+        let responseSent = false;
         const response = await runAgentForChat(chatId, prompt, {
           topicId,
           imagePaths: [imagePath],
+          onProgressUpdate: async (lines) => {
+            if (!progressReporter) return;
+            await progressReporter.update(lines);
+          },
+          onFinalResponse: async (partialResponse) => {
+            if (responseSent) return;
+            responseSent = true;
+            stopTyping();
+            await replyWithResponse(ctx, partialResponse);
+          },
         });
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
@@ -137,12 +173,15 @@ function registerMediaHandlers(options) {
           kind: 'text',
           text: extractMemoryText(response),
         });
-        await replyWithResponse(ctx, response);
+        if (!responseSent) {
+          await replyWithResponse(ctx, response);
+        }
       } catch (err) {
         console.error(err);
         await replyWithError(ctx, 'Error processing image.', err);
       } finally {
         stopTyping();
+        await progressReporter?.finish();
       }
     });
   });
@@ -157,6 +196,10 @@ function registerMediaHandlers(options) {
 
     enqueue(topicKey, async () => {
       const stopTyping = startTyping(ctx);
+      const progressReporter =
+        typeof createReplyProgressReporter === 'function'
+          ? createReplyProgressReporter(ctx)
+          : null;
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -181,9 +224,20 @@ function registerMediaHandlers(options) {
           kind: 'document',
           text: prompt,
         });
+        let responseSent = false;
         const response = await runAgentForChat(chatId, prompt, {
           topicId,
           documentPaths: [documentPath],
+          onProgressUpdate: async (lines) => {
+            if (!progressReporter) return;
+            await progressReporter.update(lines);
+          },
+          onFinalResponse: async (partialResponse) => {
+            if (responseSent) return;
+            responseSent = true;
+            stopTyping();
+            await replyWithResponse(ctx, partialResponse);
+          },
         });
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
@@ -194,12 +248,15 @@ function registerMediaHandlers(options) {
           kind: 'text',
           text: extractMemoryText(response),
         });
-        await replyWithResponse(ctx, response);
+        if (!responseSent) {
+          await replyWithResponse(ctx, response);
+        }
       } catch (err) {
         console.error(err);
         await replyWithError(ctx, 'Error processing document.', err);
       } finally {
         stopTyping();
+        await progressReporter?.finish();
       }
     });
   });

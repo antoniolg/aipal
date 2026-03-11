@@ -1,0 +1,103 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const { createAgentRunner } = require('../../src/services/agent-runner');
+const { getAgent } = require('../../src/agents');
+
+function buildRunner(overrides = {}) {
+  const threads = new Map();
+  const threadTurns = new Map();
+  const persistedThreadSnapshots = [];
+
+  const runner = createAgentRunner({
+    agentMaxBuffer: 1024 * 1024,
+    agentTimeoutMs: 30_000,
+    buildBootstrapContext: async () => 'bootstrap',
+    buildMemoryRetrievalContext: async () => '',
+    buildPrompt: (prompt) => prompt,
+    documentDir: '/tmp/aipal/documents',
+    execLocal: async () => '',
+    execLocalStreaming: async () => '',
+    fileInstructionsEvery: 3,
+    getAgent,
+    getAgentLabel: (id) => id,
+    getGlobalAgent: () => 'codex',
+    getGlobalModels: () => ({}),
+    getGlobalThinking: () => null,
+    getThreads: () => threads,
+    imageDir: '/tmp/aipal/images',
+    memoryRetrievalLimit: 0,
+    persistThreads: async () => {
+      persistedThreadSnapshots.push(new Map(threads));
+    },
+    prefixTextWithTimestamp: (text) => text,
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex',
+    resolveThreadId: (_threads, chatId, topicId, agentId) => ({
+      threadKey: `${chatId}:${topicId || 'root'}:${agentId}`,
+      threadId: undefined,
+      migrated: false,
+    }),
+    shellQuote: (value) => `'${String(value)}'`,
+    threadTurns,
+    wrapCommandWithPty: (value) => value,
+    defaultTimeZone: 'Europe/Madrid',
+    ...overrides,
+  });
+
+  return { runner, threads, persistedThreadSnapshots };
+}
+
+test('runAgentForChat streams codex final response before process exit', async () => {
+  const order = [];
+  const progressUpdates = [];
+  let resolveExec;
+  const execDone = new Promise((resolve) => {
+    resolveExec = resolve;
+  });
+
+  const outputLines = [
+    JSON.stringify({ type: 'thread.started', thread_id: 'thread-123' }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'message', channel: 'final', text: 'respuesta final' },
+    }),
+  ];
+
+  const { runner, threads, persistedThreadSnapshots } = buildRunner({
+    execLocalStreaming: async (_cmd, _args, options) => {
+      options.onStdout(`${outputLines[0]}\n`);
+      options.onStdout(
+        `${JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', channel: 'commentary', text: 'revisando archivos' },
+        })}\n`
+      );
+      options.onStdout(`${outputLines[1]}\n`);
+      order.push('stdout-finished');
+      await execDone;
+      return `${outputLines.join('\n')}\n`;
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(42, 'hola', {
+    onProgressUpdate: async (lines) => {
+      progressUpdates.push(lines.slice());
+    },
+    onFinalResponse: async (text) => {
+      order.push(`callback:${text}`);
+    },
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.ok(order.includes('callback:respuesta final'));
+
+  resolveExec();
+  const response = await runPromise;
+
+  assert.equal(response, 'respuesta final');
+  assert.deepEqual(progressUpdates, [['revisando archivos']]);
+  assert.equal(threads.get('42:root:codex'), 'thread-123');
+  assert.equal(persistedThreadSnapshots.length, 1);
+});

@@ -38,6 +38,79 @@ function createTelegramReplyService(options) {
     return () => clearInterval(timer);
   }
 
+  function formatProgressText(lines) {
+    const items = Array.isArray(lines)
+      ? lines.map((line) => String(line || '').trim()).filter(Boolean)
+      : [];
+    if (items.length === 0) return '';
+    const recent = items.slice(-4);
+    return ['Pensando...', '', ...recent.map((line) => `• ${line}`)].join('\n');
+  }
+
+  function createProgressReporter(transport) {
+    let progressMessageId = null;
+    let lastText = '';
+    let queue = Promise.resolve();
+
+    async function flush(action) {
+      queue = queue
+        .catch(() => {})
+        .then(action)
+        .catch((err) => {
+          console.warn('Failed to update progress message:', err);
+        });
+      return queue;
+    }
+
+    return {
+      async update(lines) {
+        const text = formatProgressText(lines);
+        if (!text || text === lastText) return;
+
+        await flush(async () => {
+          if (!progressMessageId) {
+            const message = await transport.send(text);
+            progressMessageId = message?.message_id || null;
+          } else {
+            await transport.edit(progressMessageId, text);
+          }
+          lastText = text;
+        });
+      },
+      async finish() {
+        if (!progressMessageId) return;
+        const messageId = progressMessageId;
+        progressMessageId = null;
+        lastText = '';
+        await flush(async () => {
+          await transport.remove(messageId);
+        });
+      },
+    };
+  }
+
+  function createReplyProgressReporter(ctx) {
+    const chatId = ctx?.chat?.id;
+    const topicId = ctx?.message?.message_thread_id;
+    const threadExtra = topicId ? { message_thread_id: topicId } : {};
+    return createProgressReporter({
+      send: async (text) => ctx.reply(text, threadExtra),
+      edit: async (messageId, text) =>
+        ctx.telegram.editMessageText(chatId, messageId, undefined, text, threadExtra),
+      remove: async (messageId) => ctx.telegram.deleteMessage(chatId, messageId),
+    });
+  }
+
+  function createChatProgressReporter(chatId, topicId) {
+    const threadExtra = topicId ? { message_thread_id: topicId } : {};
+    return createProgressReporter({
+      send: async (text) => bot.telegram.sendMessage(chatId, text, threadExtra),
+      edit: async (messageId, text) =>
+        bot.telegram.editMessageText(chatId, messageId, undefined, text, threadExtra),
+      remove: async (messageId) => bot.telegram.deleteMessage(chatId, messageId),
+    });
+  }
+
   function buildScheduleConfirmation(run) {
     return `Scheduled one-shot run for ${run.runAt} (id: ${run.id}).`;
   }
@@ -219,6 +292,8 @@ function createTelegramReplyService(options) {
   }
 
   return {
+    createChatProgressReporter,
+    createReplyProgressReporter,
     replyWithError,
     replyWithResponse,
     replyWithTranscript,

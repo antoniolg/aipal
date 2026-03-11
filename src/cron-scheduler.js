@@ -50,6 +50,9 @@ async function loadCronState() {
     if (!raw.trim()) return createEmptyCronState();
     const parsed = JSON.parse(raw);
     const state = createEmptyCronState();
+    if (typeof parsed?.lastTickAt === 'string') {
+      state.lastTickAt = parsed.lastTickAt;
+    }
     if (parsed && typeof parsed.jobs === 'object' && parsed.jobs) {
       for (const [jobId, jobState] of Object.entries(parsed.jobs)) {
         state.jobs[jobId] = normalizeJobState(jobState);
@@ -446,6 +449,7 @@ function startCronScheduler(options = {}) {
         nowDate.getTime() - runtime.job.catchupWindowSeconds * 1000
       );
       let cursor = parseTimestamp(jobState.lastScheduledAt);
+      const lastTickAt = parseTimestamp(state.lastTickAt);
       const hasHistory =
         !!jobState.lastScheduledAt
         || !!jobState.lastStartedAt
@@ -454,9 +458,15 @@ function startCronScheduler(options = {}) {
         || jobState.pendingRuns.length > 0
         || !!jobState.runningRun;
       if (!cursor) {
-        cursor = hasHistory
-          ? new Date(catchupStart.getTime() - 1000)
-          : new Date(nowDate.getTime() - 1000);
+        if (lastTickAt) {
+          cursor = new Date(
+            Math.max(lastTickAt.getTime(), catchupStart.getTime()) - 1000
+          );
+        } else {
+          cursor = hasHistory
+            ? new Date(catchupStart.getTime() - 1000)
+            : new Date(nowDate.getTime() - 1000);
+        }
       } else if (cursor.getTime() < catchupStart.getTime()) {
         let firstMissedAt = null;
         let lastMissedAt = null;
@@ -526,7 +536,12 @@ function startCronScheduler(options = {}) {
     await ensureInitializedState();
     const currentTime = now();
     const { changed, alerts } = scanDueSlots(currentTime);
-    if (changed) {
+    const previousTickAt = state.lastTickAt;
+    state.lastTickAt = currentTime.toISOString();
+    const shouldPersistHeartbeat =
+      !previousTickAt
+      || previousTickAt.slice(0, 16) !== state.lastTickAt.slice(0, 16);
+    if (changed || shouldPersistHeartbeat) {
       await queueStatePersist();
     }
     for (const alert of alerts) {

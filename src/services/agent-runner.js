@@ -7,6 +7,7 @@ function createAgentRunner(options) {
     buildPrompt,
     documentDir,
     execLocal,
+    execLocalStreaming,
     fileInstructionsEvery,
     getAgent,
     getAgentLabel,
@@ -93,7 +94,15 @@ function createAgentRunner(options) {
   }
 
   async function runAgentForChat(chatId, prompt, runOptions = {}) {
-    const { topicId, agentId: overrideAgentId, imagePaths, scriptContext, documentPaths } =
+    const {
+      topicId,
+      agentId: overrideAgentId,
+      imagePaths,
+      scriptContext,
+      documentPaths,
+      onFinalResponse,
+      onProgressUpdate,
+    } =
       runOptions;
     const effectiveAgentId = resolveEffectiveAgentId(
       chatId,
@@ -152,7 +161,11 @@ function createAgentRunner(options) {
       scriptContext,
       documentPaths || [],
       documentDir,
-      { includeFileInstructions: shouldIncludeFileInstructions }
+      {
+        includeFileInstructions: shouldIncludeFileInstructions,
+        currentDate: new Date(),
+        defaultTimeZone,
+      }
     );
     const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
     const promptExpression = '"$PROMPT"';
@@ -182,11 +195,59 @@ function createAgentRunner(options) {
     );
     let output;
     let execError;
+    let streamedOutput = '';
+    let streamedThreadId;
+    let streamedFinalText;
+    let streamedFinalDelivered = false;
+    let lastProgressFingerprint = '';
+    const canStreamFinal =
+      (typeof onFinalResponse === 'function' || typeof onProgressUpdate === 'function')
+      && typeof execLocalStreaming === 'function'
+      && typeof agent.parseStreamingOutput === 'function';
     try {
-      output = await execLocal('bash', ['-lc', commandToRun], {
-        timeout: agentTimeoutMs,
-        maxBuffer: agentMaxBuffer,
-      });
+      if (canStreamFinal) {
+        output = await execLocalStreaming('bash', ['-lc', commandToRun], {
+          timeout: agentTimeoutMs,
+          maxBuffer: agentMaxBuffer,
+          onStdout: (chunk) => {
+            streamedOutput += chunk;
+            const partial = agent.parseStreamingOutput(streamedOutput);
+            if (partial.threadId) {
+              streamedThreadId = partial.threadId;
+            }
+            if (
+              typeof onProgressUpdate === 'function'
+              && Array.isArray(partial.commentaryMessages)
+            ) {
+              const fingerprint = partial.commentaryMessages.join('\n');
+              if (fingerprint && fingerprint !== lastProgressFingerprint) {
+                lastProgressFingerprint = fingerprint;
+                Promise.resolve(onProgressUpdate(partial.commentaryMessages)).catch(
+                  (err) => {
+                    console.warn('Failed to stream agent progress update:', err);
+                  }
+                );
+              }
+            }
+            if (
+              partial.sawFinal
+              && partial.text
+              && !streamedFinalDelivered
+            ) {
+              streamedFinalDelivered = true;
+              streamedFinalText = partial.text;
+              Promise.resolve(onFinalResponse(partial.text)).catch((err) => {
+                console.warn('Failed to stream final agent response:', err);
+              });
+            }
+          },
+        });
+      } else {
+        output = await execLocal('bash', ['-lc', commandToRun], {
+          timeout: agentTimeoutMs,
+          maxBuffer: agentMaxBuffer,
+        });
+      }
     } catch (err) {
       execError = err;
       if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
@@ -201,6 +262,12 @@ function createAgentRunner(options) {
       );
     }
     const parsed = agent.parseOutput(output);
+    if (!parsed.threadId && streamedThreadId) {
+      parsed.threadId = streamedThreadId;
+    }
+    if (!parsed.text && streamedFinalText) {
+      parsed.text = streamedFinalText;
+    }
     if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
       throw execError;
     }

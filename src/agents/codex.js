@@ -27,11 +27,12 @@ function buildCommand({ prompt, promptExpression, threadId, model, thinking }) {
   return `${CODEX_CMD} exec ${args} ${promptValue}`.trim();
 }
 
-function parseOutput(output) {
+function collectMessages(output) {
   const lines = String(output || '').split(/\r?\n/);
   let threadId;
   const allMessages = [];
   const finalMessages = [];
+  const commentaryMessages = [];
   let sawJson = false;
   let buffer = '';
   for (const line of lines) {
@@ -69,13 +70,34 @@ function parseOutput(output) {
         ).toLowerCase();
         if (channel === 'final') {
           finalMessages.push(text);
+        } else if (channel === 'commentary') {
+          commentaryMessages.push(text);
         }
       }
     }
   }
+  return { threadId, allMessages, finalMessages, commentaryMessages, sawJson };
+}
+
+function parseOutput(output) {
+  const { threadId, allMessages, finalMessages, sawJson } = collectMessages(output);
   const selected = finalMessages.length > 0 ? finalMessages : allMessages.slice(-1);
   const text = selected.join('\n').trim();
   return { text, threadId, sawJson };
+}
+
+function parseStreamingOutput(output) {
+  const { threadId, finalMessages, commentaryMessages, sawJson } = collectMessages(output);
+  const text = finalMessages.length > 0
+    ? String(finalMessages[finalMessages.length - 1] || '').trim()
+    : '';
+  return {
+    text,
+    threadId,
+    sawJson,
+    sawFinal: finalMessages.length > 0,
+    commentaryMessages,
+  };
 }
 
 module.exports = {
@@ -85,4 +107,5 @@ module.exports = {
   mergeStderr: false,
   buildCommand,
   parseOutput,
+  parseStreamingOutput,
 };

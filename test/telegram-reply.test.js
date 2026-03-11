@@ -196,3 +196,56 @@ test('replyWithResponse materializes schedule tokens and appends confirmation', 
   assert.equal(createdRuns[0].agent, 'codex');
   assert.match(replies[0], /Scheduled one-shot run/);
 });
+
+test('createReplyProgressReporter reuses a single Telegram message', async () => {
+  const sent = [];
+  const edited = [];
+  const deleted = [];
+  const ctx = {
+    chat: { id: 123 },
+    message: { message_thread_id: 77 },
+    reply: async (text, options) => {
+      sent.push({ text, options });
+      return { message_id: 555 };
+    },
+    telegram: {
+      editMessageText: async (chatId, messageId, _inline, text, options) => {
+        edited.push({ chatId, messageId, text, options });
+      },
+      deleteMessage: async (chatId, messageId) => {
+        deleted.push({ chatId, messageId });
+      },
+    },
+  };
+
+  const service = createTelegramReplyService({
+    bot: { telegram: {} },
+    chunkMarkdown: () => [],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    documentDir: '/tmp/docs',
+    extractDocumentTokens: () => ({ cleanedText: '', documentPaths: [] }),
+    extractImageTokens: () => ({ cleanedText: '', imagePaths: [] }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: '',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: () => true,
+    markdownToTelegramHtml: () => '',
+    resolveEffectiveAgentId: () => 'codex',
+  });
+
+  const reporter = service.createReplyProgressReporter(ctx);
+  await reporter.update(['mirando el repo']);
+  await reporter.update(['mirando el repo', 'preparando el cambio']);
+  await reporter.finish();
+
+  assert.equal(sent.length, 1);
+  assert.equal(edited.length, 1);
+  assert.equal(edited[0].messageId, 555);
+  assert.equal(edited[0].options.message_thread_id, 77);
+  assert.deepEqual(deleted, [{ chatId: 123, messageId: 555 }]);
+});

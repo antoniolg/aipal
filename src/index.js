@@ -107,7 +107,12 @@ const {
   HTTP_AUTH_TOKEN,
 } = require('./app/env');
 const { createAppState } = require('./app/state');
-const { execLocal, shellQuote, wrapCommandWithPty } = require('./services/process');
+const {
+  execLocal,
+  execLocalStreaming,
+  shellQuote,
+  wrapCommandWithPty,
+} = require('./services/process');
 const { createEnqueue } = require('./services/queue');
 const { createAgentRunner } = require('./services/agent-runner');
 const { createCronAlertNotifier } = require('./services/cron-alerts');
@@ -246,6 +251,7 @@ const agentRunner = createAgentRunner({
   buildPrompt,
   documentDir: DOCUMENT_DIR,
   execLocal,
+  execLocalStreaming,
   fileInstructionsEvery: FILE_INSTRUCTIONS_EVERY,
   getAgent,
   getAgentLabel,
@@ -282,6 +288,8 @@ const telegramReplyService = createTelegramReplyService({
   resolveEffectiveAgentId,
 });
 const {
+  createChatProgressReporter,
+  createReplyProgressReporter,
   replyWithError,
   replyWithResponse,
   replyWithTranscript,
@@ -455,6 +463,7 @@ registerHandlers({
   buildTopicKey,
   captureMemoryEvent,
   consumeScriptContext,
+  createReplyProgressReporter,
   documentDir: DOCUMENT_DIR,
   downloadTelegramFile,
   enqueue,

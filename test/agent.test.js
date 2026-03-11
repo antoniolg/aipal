@@ -51,6 +51,24 @@ test('parseAgentOutput prefers final channel messages for codex', () => {
   assert.equal(parsed.text, 'hecho: resultado final');
 });
 
+test('parseStreamingOutput only emits codex final channel messages', () => {
+  const agent = getAgent('codex');
+  const output = [
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'message', channel: 'commentary', text: 'comentario' },
+    }),
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'message', channel: 'final', text: 'respuesta final' },
+    }),
+  ].join('\n');
+  const parsed = agent.parseStreamingOutput(output);
+  assert.equal(parsed.sawFinal, true);
+  assert.equal(parsed.text, 'respuesta final');
+  assert.deepEqual(parsed.commentaryMessages, ['comentario']);
+});
+
 test('parseAgentOutput falls back to last codex message when no channel exists', () => {
   const agent = getAgent('codex');
   const output = [

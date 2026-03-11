@@ -1,7 +1,13 @@
 const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('child_process');
-const { execLocal, shellQuote, wrapCommandWithPty } = require('../../src/services/process');
+const { EventEmitter } = require('node:events');
+const {
+    execLocal,
+    execLocalStreaming,
+    shellQuote,
+    wrapCommandWithPty,
+} = require('../../src/services/process');
 
 test('process.js service', async (t) => {
     t.afterEach(() => {
@@ -64,6 +70,64 @@ test('process.js service', async (t) => {
                 assert.equal(err.message, 'Command timed out after 5000ms');
                 assert.equal(err.stdout, 'partial out');
                 assert.equal(err.stderr, 'partial err');
+                return true;
+            }
+        );
+    });
+
+    await t.test('execLocalStreaming streams stdout chunks and resolves with full stdout', async () => {
+        mock.method(cp, 'spawn', (cmd, args, opts) => {
+            assert.equal(cmd, 'bash');
+            assert.deepEqual(args, ['-lc', 'echo hi']);
+            assert.equal(opts.cwd, '/tmp/demo');
+
+            const child = new EventEmitter();
+            child.stdout = new EventEmitter();
+            child.stderr = new EventEmitter();
+            child.kill = () => {};
+
+            process.nextTick(() => {
+                child.stdout.emit('data', 'hello ');
+                child.stdout.emit('data', 'world');
+                child.emit('close', 0, null);
+            });
+
+            return child;
+        });
+
+        const chunks = [];
+        const result = await execLocalStreaming('bash', ['-lc', 'echo hi'], {
+            cwd: '/tmp/demo',
+            onStdout: (chunk) => chunks.push(chunk),
+        });
+
+        assert.equal(result, 'hello world');
+        assert.deepEqual(chunks, ['hello ', 'world']);
+    });
+
+    await t.test('execLocalStreaming rejects with timeout error including partial output', async () => {
+        mock.method(cp, 'spawn', () => {
+            const child = new EventEmitter();
+            child.stdout = new EventEmitter();
+            child.stderr = new EventEmitter();
+            child.kill = () => {
+                process.nextTick(() => {
+                    child.emit('close', null, 'SIGTERM');
+                });
+            };
+
+            process.nextTick(() => {
+                child.stdout.emit('data', 'partial');
+            });
+
+            return child;
+        });
+
+        await assert.rejects(
+            () => execLocalStreaming('bash', ['-lc', 'sleep 10'], { timeout: 5 }),
+            (err) => {
+                assert.equal(err.code, 'ETIMEDOUT');
+                assert.equal(err.stdout, 'partial');
                 return true;
             }
         );

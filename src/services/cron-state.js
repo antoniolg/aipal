@@ -13,7 +13,7 @@ function parseTimestamp(value) {
 }
 
 function createEmptyCronState() {
-  return { jobs: {} };
+  return { lastTickAt: null, jobs: {} };
 }
 
 function normalizePendingRun(run) {

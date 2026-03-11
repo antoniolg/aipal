@@ -205,6 +205,48 @@ test('scheduler catches up missed slots after downtime within the configured win
   scheduler.stop();
 });
 
+test('scheduler catches up the first slot after wake even without prior job history', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-cron-'));
+  const { saveCronJobs, saveCronState, startCronScheduler } = loadCronScheduler(dir);
+  const clock = createManualClock('2026-03-10T09:19:00.000Z');
+  const timers = createManualTimers();
+
+  await saveCronJobs([
+    {
+      id: 'wake-catchup',
+      cron: '15 9 * * *',
+      prompt: 'wake up',
+      enabled: true,
+      timezone: 'UTC',
+      catchupWindowSeconds: 600,
+    },
+  ]);
+
+  await saveCronState({
+    lastTickAt: '2026-03-10T09:14:30.000Z',
+    jobs: {},
+  });
+
+  const scheduledAts = [];
+  const scheduler = startCronScheduler({
+    chatId: 123,
+    now: () => clock.now(),
+    onTrigger: async (_chatId, _prompt, options) => {
+      scheduledAts.push(options.scheduledAt);
+      return { ok: true };
+    },
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+
+  await scheduler.ready();
+  await waitForSchedulerIdle(scheduler);
+
+  assert.deepEqual(scheduledAts, ['2026-03-10T09:15:00.000Z']);
+
+  scheduler.stop();
+});
+
 test('scheduler retries failed runs with backoff and preserves pending retries on disk', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-cron-'));
   const {

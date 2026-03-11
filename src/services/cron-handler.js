@@ -35,6 +35,8 @@ function createCronHandler(options) {
         }${agent ? ` (agent: ${agent})` : ''} reason=${triggerReason} attempt=${attempt}/${maxAttempts}${scheduledAt ? ` scheduledAt=${scheduledAt}` : ''}`
       );
       try {
+        let responseSent = false;
+        const silentTokens = ['HEARTBEAT_OK', 'CURATION_EMPTY'];
         const actionExtra = topicId ? { message_thread_id: topicId } : {};
         await bot.telegram.sendChatAction(chatId, 'typing', actionExtra);
         await captureMemoryEvent({
@@ -49,6 +51,17 @@ function createCronHandler(options) {
         const response = await runAgentForChat(chatId, prompt, {
           agentId: agent,
           topicId,
+          onFinalResponse: async (partialResponse) => {
+            const matchedToken = silentTokens.find((t) =>
+              String(partialResponse || '').includes(t)
+            );
+            if (matchedToken || responseSent) return;
+            responseSent = true;
+            await sendResponseToChat(chatId, partialResponse, {
+              topicId,
+              agentId: effectiveAgentId,
+            });
+          },
         });
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
@@ -59,16 +72,17 @@ function createCronHandler(options) {
           kind: 'text',
           text: extractMemoryText(response),
         });
-        const silentTokens = ['HEARTBEAT_OK', 'CURATION_EMPTY'];
         const matchedToken = silentTokens.find((t) => response.includes(t));
         if (matchedToken) {
           console.info(`Cron job ${jobId}: ${matchedToken} (silent)`);
           return { ok: true, response, silent: true };
         }
-        await sendResponseToChat(chatId, response, {
-          topicId,
-          agentId: effectiveAgentId,
-        });
+        if (!responseSent) {
+          await sendResponseToChat(chatId, response, {
+            topicId,
+            agentId: effectiveAgentId,
+          });
+        }
         return { ok: true, response, silent: false };
       } catch (err) {
         console.error(`Cron job ${jobId} failed:`, err);

@@ -5,6 +5,7 @@ function registerTextHandler(options) {
     buildTopicKey,
     captureMemoryEvent,
     consumeScriptContext,
+    createReplyProgressReporter,
     enqueue,
     extractMemoryText,
     formatScriptContext,
@@ -48,6 +49,10 @@ function registerTextHandler(options) {
       }
       enqueue(topicKey, async () => {
         const stopTyping = startTyping(ctx);
+        const progressReporter =
+          typeof createReplyProgressReporter === 'function'
+            ? createReplyProgressReporter(ctx)
+            : null;
         const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
         const memoryThreadKey = buildMemoryThreadKey(
           chatId,
@@ -81,9 +86,20 @@ function registerTextHandler(options) {
               name: slash.name,
               output,
             });
+            let responseSent = false;
             const response = await runAgentForChat(chatId, llmPrompt, {
               topicId,
               scriptContext,
+              onProgressUpdate: async (lines) => {
+                if (!progressReporter) return;
+                await progressReporter.update(lines);
+              },
+              onFinalResponse: async (partialResponse) => {
+                if (responseSent) return;
+                responseSent = true;
+                stopTyping();
+                await replyWithResponse(ctx, partialResponse);
+              },
             });
             await captureMemoryEvent({
               threadKey: memoryThreadKey,
@@ -94,8 +110,10 @@ function registerTextHandler(options) {
               kind: 'text',
               text: extractMemoryText(response),
             });
-            stopTyping();
-            await replyWithResponse(ctx, response);
+            if (!responseSent) {
+              stopTyping();
+              await replyWithResponse(ctx, response);
+            }
             return;
           }
           lastScriptOutputs.set(topicKey, { name: slash.name, output });
@@ -114,6 +132,8 @@ function registerTextHandler(options) {
           console.error(err);
           stopTyping();
           await replyWithError(ctx, `Error running /${slash.name}.`, err);
+        } finally {
+          await progressReporter?.finish();
         }
       });
       return;
@@ -121,6 +141,10 @@ function registerTextHandler(options) {
 
     enqueue(topicKey, async () => {
       const stopTyping = startTyping(ctx);
+      const progressReporter =
+        typeof createReplyProgressReporter === 'function'
+          ? createReplyProgressReporter(ctx)
+          : null;
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -128,6 +152,7 @@ function registerTextHandler(options) {
         effectiveAgentId
       );
       try {
+        let responseSent = false;
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
           chatId,
@@ -141,6 +166,16 @@ function registerTextHandler(options) {
         const response = await runAgentForChat(chatId, text, {
           topicId,
           scriptContext,
+          onProgressUpdate: async (lines) => {
+            if (!progressReporter) return;
+            await progressReporter.update(lines);
+          },
+          onFinalResponse: async (partialResponse) => {
+            if (responseSent) return;
+            responseSent = true;
+            stopTyping();
+            await replyWithResponse(ctx, partialResponse);
+          },
         });
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
@@ -151,12 +186,16 @@ function registerTextHandler(options) {
           kind: 'text',
           text: extractMemoryText(response),
         });
-        stopTyping();
-        await replyWithResponse(ctx, response);
+        if (!responseSent) {
+          stopTyping();
+          await replyWithResponse(ctx, response);
+        }
       } catch (err) {
         console.error(err);
         stopTyping();
         await replyWithError(ctx, 'Error processing response.', err);
+      } finally {
+        await progressReporter?.finish();
       }
     });
   });
