@@ -288,7 +288,6 @@ const telegramReplyService = createTelegramReplyService({
   resolveEffectiveAgentId,
 });
 const {
-  createChatProgressReporter,
   createReplyProgressReporter,
   replyWithError,
   replyWithResponse,
