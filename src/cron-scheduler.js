@@ -151,6 +151,7 @@ function startCronScheduler(options = {}) {
   let tickPromise = Promise.resolve();
   let persistPromise = Promise.resolve();
   let alertPromise = Promise.resolve();
+  let lastDueScanBucket = null;
 
   function ensureJobState(jobId) {
     if (!state.jobs[jobId]) {
@@ -425,6 +426,7 @@ function startCronScheduler(options = {}) {
     for (const [jobId, runtime] of nextTasks) {
       tasks.set(jobId, runtime);
     }
+    lastDueScanBucket = null;
 
     if (pruneState(validJobIds) || stateChanged) {
       await queueStatePersist();
@@ -532,10 +534,32 @@ function startCronScheduler(options = {}) {
     initialized = true;
   }
 
+  function getDueScanResolutionMs() {
+    let resolutionMs = Number.POSITIVE_INFINITY;
+    for (const runtime of tasks.values()) {
+      const candidate = runtime?.matcher?.stepMs;
+      if (!Number.isFinite(candidate) || candidate <= 0) continue;
+      resolutionMs = Math.min(resolutionMs, candidate);
+    }
+    return Number.isFinite(resolutionMs) ? resolutionMs : pollIntervalMs;
+  }
+
+  function shouldScanDueSlots(currentTime) {
+    const resolutionMs = getDueScanResolutionMs();
+    const bucket = Math.floor(currentTime.getTime() / resolutionMs);
+    if (lastDueScanBucket === bucket) {
+      return false;
+    }
+    lastDueScanBucket = bucket;
+    return true;
+  }
+
   async function runTick() {
     await ensureInitializedState();
     const currentTime = now();
-    const { changed, alerts } = scanDueSlots(currentTime);
+    const { changed, alerts } = shouldScanDueSlots(currentTime)
+      ? scanDueSlots(currentTime)
+      : { changed: false, alerts: [] };
     const previousTickAt = state.lastTickAt;
     state.lastTickAt = currentTime.toISOString();
     const shouldPersistHeartbeat =

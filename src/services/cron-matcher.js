@@ -172,11 +172,17 @@ function matchesCronParts(parts, date, timezone) {
 
 function createCronMatcher(expression, timezone) {
   const parts = buildCronParts(expression);
-  const hasSeconds = normalizeCronExpression(expression).length === 6;
+  const rawFieldCount = String(expression || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const hasSeconds = rawFieldCount === 6;
   const stepMs = hasSeconds ? 1000 : 60 * 1000;
   const maxLookaheadMs = 366 * 24 * 60 * 60 * 1000;
 
   return {
+    hasSeconds,
+    stepMs,
     match(date) {
       return matchesCronParts(parts, date, timezone);
     },

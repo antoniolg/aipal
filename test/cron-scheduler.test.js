@@ -496,6 +496,57 @@ test('scheduler alerts once when old slots fall outside the catch-up window', as
   scheduler.stop();
 });
 
+test('scheduler skips repeated future-slot scans within the same minute bucket', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-cron-'));
+  const { saveCronJobs, startCronScheduler } = loadCronScheduler(dir);
+  const clock = createManualClock('2026-03-13T13:20:00.000Z');
+  const timers = createManualTimers();
+
+  await saveCronJobs([
+    {
+      id: 'weekly-future',
+      cron: '0 16 * * 5',
+      prompt: 'later',
+      enabled: true,
+      timezone: 'Europe/Madrid',
+    },
+  ]);
+
+  const scheduler = startCronScheduler({
+    chatId: 123,
+    now: () => clock.now(),
+    onTrigger: async () => ({ ok: true }),
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+
+  await scheduler.ready();
+
+  const runtime = scheduler.tasks.get('weekly-future');
+  let scans = 0;
+  const originalGetNextMatch = runtime.matcher.getNextMatch;
+  runtime.matcher.getNextMatch = (...args) => {
+    scans += 1;
+    return originalGetNextMatch(...args);
+  };
+
+  clock.advance(1000);
+  await scheduler.tick();
+  clock.advance(1000);
+  await scheduler.tick();
+  clock.advance(1000);
+  await scheduler.tick();
+
+  assert.equal(scans, 0);
+
+  clock.set('2026-03-13T13:21:00.000Z');
+  await scheduler.tick();
+
+  assert.ok(scans > 0);
+
+  scheduler.stop();
+});
+
 test('scheduler never overlaps runs of the same job and drains them in order', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-cron-'));
   const { saveCronJobs, saveCronState, startCronScheduler } = loadCronScheduler(dir);
