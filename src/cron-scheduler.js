@@ -498,7 +498,10 @@ function startCronScheduler(options = {}) {
             ...buildAlertTarget(runtime.job),
           });
         }
-        cursor = new Date(catchupStart.getTime() - 1000);
+        const prevCursor = parseTimestamp(jobState.lastScheduledAt);
+        cursor = new Date(
+          Math.max(catchupStart.getTime() - 1000, prevCursor ? prevCursor.getTime() : 0)
+        );
       }
 
       let nextRunAt = runtime.matcher.getNextMatch(cursor);
