@@ -1,3 +1,5 @@
+const { buildTelegramThreadExtra } = require('./telegram-topics');
+
 function createCronHandler(options) {
   const {
     bot,
@@ -37,7 +39,7 @@ function createCronHandler(options) {
       try {
         let responseSent = false;
         const silentTokens = ['HEARTBEAT_OK', 'CURATION_EMPTY'];
-        const actionExtra = topicId ? { message_thread_id: topicId } : {};
+        const actionExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
         await bot.telegram.sendChatAction(chatId, 'typing', actionExtra);
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
@@ -88,7 +90,7 @@ function createCronHandler(options) {
         console.error(`Cron job ${jobId} failed:`, err);
         if (notifyFailure) {
           try {
-            const errExtra = topicId ? { message_thread_id: topicId } : {};
+            const errExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
             await bot.telegram.sendMessage(
               chatId,
               `Cron job "${jobId}" failed: ${err.message}`,

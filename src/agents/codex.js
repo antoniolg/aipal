@@ -45,7 +45,14 @@ function extractTextFromMessagePayload(message) {
   return textParts.join('\n').trim();
 }
 
-function pushMessageByPhase({ text, phase, allMessages, finalMessages, commentaryMessages }) {
+function pushMessageByPhase({
+  text,
+  phase,
+  allMessages,
+  finalMessages,
+  commentaryMessages,
+  pendingMessages,
+}) {
   const normalizedText = String(text || '').trim();
   if (!normalizedText) return;
 
@@ -56,6 +63,8 @@ function pushMessageByPhase({ text, phase, allMessages, finalMessages, commentar
     finalMessages.push(normalizedText);
   } else if (normalizedPhase === 'commentary') {
     commentaryMessages.push(normalizedText);
+  } else if (pendingMessages) {
+    pendingMessages.push(normalizedText);
   }
 }
 
@@ -65,6 +74,7 @@ function collectMessages(output) {
   const allMessages = [];
   const finalMessages = [];
   const commentaryMessages = [];
+  const pendingMessages = [];
   let sawJson = false;
   let sawTurnCompleted = false;
   let sawExplicitFinal = false;
@@ -110,15 +120,20 @@ function collectMessages(output) {
             allMessages,
             finalMessages,
             commentaryMessages,
+            pendingMessages,
           });
           if (channel === 'final') {
             sawExplicitFinal = true;
           }
         } else {
-          const text = String(payload.item.text || '').trim();
-          if (text) {
-            allMessages.push(text);
-          }
+          pushMessageByPhase({
+            text: payload.item.text,
+            phase: '',
+            allMessages,
+            finalMessages,
+            commentaryMessages,
+            pendingMessages,
+          });
         }
       }
       continue;
@@ -134,6 +149,7 @@ function collectMessages(output) {
         allMessages,
         finalMessages,
         commentaryMessages,
+        pendingMessages,
       });
       continue;
     }
@@ -148,17 +164,13 @@ function collectMessages(output) {
         allMessages,
         finalMessages,
         commentaryMessages,
+        pendingMessages,
       });
     }
   }
 
-  if (finalMessages.length === 0 && allMessages.length > 0) {
-    if (sawTurnCompleted) {
-      finalMessages.push(allMessages[allMessages.length - 1]);
-      commentaryMessages.splice(0, commentaryMessages.length, ...allMessages.slice(0, -1));
-    } else {
-      commentaryMessages.splice(0, commentaryMessages.length, ...allMessages);
-    }
+  if (finalMessages.length === 0 && pendingMessages.length > 0 && sawTurnCompleted) {
+    finalMessages.push(pendingMessages[pendingMessages.length - 1]);
   }
 
   return {

@@ -30,6 +30,7 @@ function buildRunner(overrides = {}) {
     persistThreads: async () => {
       persistedThreadSnapshots.push(new Map(threads));
     },
+    postFinalGraceMs: 5,
     prefixTextWithTimestamp: (text) => text,
     resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
       overrideAgentId || 'codex',
@@ -39,6 +40,7 @@ function buildRunner(overrides = {}) {
       migrated: false,
     }),
     shellQuote: (value) => `'${String(value)}'`,
+    terminateChildProcess: () => {},
     threadTurns,
     wrapCommandWithPty: (value) => value,
     defaultTimeZone: 'Europe/Madrid',
@@ -100,4 +102,68 @@ test('runAgentForChat streams codex final response before process exit', async (
   assert.deepEqual(progressUpdates, [['revisando archivos']]);
   assert.equal(threads.get('42:root:codex'), 'thread-123');
   assert.equal(persistedThreadSnapshots.length, 1);
+});
+
+test('runAgentForChat kills a lingering process after final emission and drops late progress', async () => {
+  const progressUpdates = [];
+  const settled = [];
+  const killCalls = [];
+  const child = { pid: 999, kill: () => {} };
+
+  const { runner } = buildRunner({
+    execLocalStreaming: async (_cmd, _args, options) => {
+      options.onSpawn(child);
+      options.onStdout(
+        `${JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', channel: 'commentary', text: 'primer paso' },
+        })}\n`
+      );
+      options.onStdout(
+        `${JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', channel: 'final', text: 'resultado listo' },
+        })}\n`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      options.onStdout(
+        `${JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', channel: 'commentary', text: 'esto debe ignorarse' },
+        })}\n`
+      );
+      return [
+        JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', channel: 'commentary', text: 'primer paso' },
+        }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: { type: 'message', channel: 'final', text: 'resultado listo' },
+        }),
+      ].join('\n');
+    },
+    terminateChildProcess: (processRef, signal) => {
+      killCalls.push({ processRef, signal });
+    },
+  });
+
+  const response = await runner.runAgentForChat(99, 'hola', {
+    onProgressUpdate: async (lines) => {
+      progressUpdates.push(lines.slice());
+    },
+    onSettled: async (payload) => {
+      settled.push(payload);
+    },
+  });
+
+  assert.equal(response, 'resultado listo');
+  assert.deepEqual(progressUpdates, [['primer paso']]);
+  assert.equal(killCalls.length >= 1, true);
+  assert.equal(killCalls[0].processRef, child);
+  assert.equal(killCalls[0].signal, 'SIGTERM');
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].status, 'succeeded');
+  assert.equal(settled[0].finalEmitted, true);
+  assert.equal(settled[0].droppedProgressUpdates, 1);
 });

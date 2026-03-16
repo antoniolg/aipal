@@ -39,6 +39,10 @@ const AGENT_TIMEOUT_MS = readNumberEnv(
   process.env.AIPAL_AGENT_TIMEOUT_MS,
   600000
 );
+const AGENT_POST_FINAL_GRACE_MS = readNumberEnv(
+  process.env.AIPAL_AGENT_POST_FINAL_GRACE_MS,
+  2500
+);
 const AGENT_MAX_BUFFER = readNumberEnv(
   process.env.AIPAL_AGENT_MAX_BUFFER,
   10 * 1024 * 1024
@@ -66,6 +70,7 @@ const HTTP_AUTH_TOKEN = process.env.HTTP_AUTH_TOKEN || '';
 
 module.exports = {
   AGENT_MAX_BUFFER,
+  AGENT_POST_FINAL_GRACE_MS,
   AGENT_TIMEOUT_MS,
   DOCUMENT_CLEANUP_INTERVAL_MS,
   DOCUMENT_DIR,

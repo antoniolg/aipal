@@ -37,6 +37,13 @@ function registerMediaHandlers(options) {
         typeof createReplyProgressReporter === 'function'
           ? createReplyProgressReporter(ctx)
           : null;
+      let uiClosed = false;
+      const finishUi = async () => {
+        if (uiClosed) return;
+        uiClosed = true;
+        stopTyping();
+        await progressReporter?.finish();
+      };
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -76,8 +83,11 @@ function registerMediaHandlers(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            stopTyping();
+            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+          },
+          onSettled: async () => {
+            await finishUi();
           },
         });
         await captureMemoryEvent({
@@ -90,6 +100,7 @@ function registerMediaHandlers(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
+          await finishUi();
           await replyWithResponse(ctx, response);
         }
       } catch (err) {
@@ -104,8 +115,7 @@ function registerMediaHandlers(options) {
           await replyWithError(ctx, 'Error processing audio.', err);
         }
       } finally {
-        stopTyping();
-        await progressReporter?.finish();
+        await finishUi();
         await safeUnlink(audioPath);
         await safeUnlink(transcriptPath);
       }
@@ -125,6 +135,13 @@ function registerMediaHandlers(options) {
         typeof createReplyProgressReporter === 'function'
           ? createReplyProgressReporter(ctx)
           : null;
+      let uiClosed = false;
+      const finishUi = async () => {
+        if (uiClosed) return;
+        uiClosed = true;
+        stopTyping();
+        await progressReporter?.finish();
+      };
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -160,8 +177,11 @@ function registerMediaHandlers(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            stopTyping();
+            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+          },
+          onSettled: async () => {
+            await finishUi();
           },
         });
         await captureMemoryEvent({
@@ -174,14 +194,15 @@ function registerMediaHandlers(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
+          await finishUi();
           await replyWithResponse(ctx, response);
         }
       } catch (err) {
         console.error(err);
+        await finishUi();
         await replyWithError(ctx, 'Error processing image.', err);
       } finally {
-        stopTyping();
-        await progressReporter?.finish();
+        await finishUi();
       }
     });
   });
@@ -200,6 +221,13 @@ function registerMediaHandlers(options) {
         typeof createReplyProgressReporter === 'function'
           ? createReplyProgressReporter(ctx)
           : null;
+      let uiClosed = false;
+      const finishUi = async () => {
+        if (uiClosed) return;
+        uiClosed = true;
+        stopTyping();
+        await progressReporter?.finish();
+      };
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -235,8 +263,11 @@ function registerMediaHandlers(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            stopTyping();
+            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+          },
+          onSettled: async () => {
+            await finishUi();
           },
         });
         await captureMemoryEvent({
@@ -249,14 +280,15 @@ function registerMediaHandlers(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
+          await finishUi();
           await replyWithResponse(ctx, response);
         }
       } catch (err) {
         console.error(err);
+        await finishUi();
         await replyWithError(ctx, 'Error processing document.', err);
       } finally {
-        stopTyping();
-        await progressReporter?.finish();
+        await finishUi();
       }
     });
   });

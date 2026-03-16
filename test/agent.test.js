@@ -140,10 +140,10 @@ test('parseStreamingOutput infers commentary and final from agent_message stream
   const parsed = agent.parseStreamingOutput(output);
   assert.equal(parsed.sawFinal, true);
   assert.equal(parsed.text, 'Sigo mirando el repo');
-  assert.deepEqual(parsed.commentaryMessages, ['Voy a comprobar algo']);
+  assert.deepEqual(parsed.commentaryMessages, []);
 });
 
-test('parseStreamingOutput keeps live agent_message entries as commentary before turn completion', () => {
+test('parseStreamingOutput keeps live agent_message entries pending before turn completion', () => {
   const agent = getAgent('codex');
   const output = JSON.stringify({
     type: 'item.completed',
@@ -153,7 +153,20 @@ test('parseStreamingOutput keeps live agent_message entries as commentary before
   const parsed = agent.parseStreamingOutput(output);
   assert.equal(parsed.sawFinal, false);
   assert.equal(parsed.text, '');
-  assert.deepEqual(parsed.commentaryMessages, ['Voy a comprobar algo']);
+  assert.deepEqual(parsed.commentaryMessages, []);
+});
+
+test('parseStreamingOutput does not leak unphased final text into commentary', () => {
+  const agent = getAgent('codex');
+  const output = JSON.stringify({
+    type: 'item.completed',
+    item: { type: 'message', text: 'respuesta final sin phase' },
+  });
+
+  const parsed = agent.parseStreamingOutput(output);
+  assert.equal(parsed.sawFinal, false);
+  assert.equal(parsed.text, '');
+  assert.deepEqual(parsed.commentaryMessages, []);
 });
 
 test('parseAgentOutput falls back to last codex message when no channel exists', () => {

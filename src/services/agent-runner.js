@@ -18,14 +18,54 @@ function createAgentRunner(options) {
     imageDir,
     memoryRetrievalLimit,
     persistThreads,
+    postFinalGraceMs = 2500,
     prefixTextWithTimestamp,
     resolveEffectiveAgentId,
     resolveThreadId,
     shellQuote,
+    terminateChildProcess,
     threadTurns,
     wrapCommandWithPty,
     defaultTimeZone,
   } = options;
+  const activeRuns = new Set();
+
+  function scheduleRunTermination(run, signal) {
+    if (!run?.child || typeof terminateChildProcess !== 'function') return;
+    terminateChildProcess(run.child, signal);
+  }
+
+  function clearRunTimers(run) {
+    if (run.postFinalKillTimer) {
+      clearTimeout(run.postFinalKillTimer);
+      run.postFinalKillTimer = null;
+    }
+    if (run.postFinalForceKillTimer) {
+      clearTimeout(run.postFinalForceKillTimer);
+      run.postFinalForceKillTimer = null;
+    }
+  }
+
+  function cancelActiveRuns({ reason = 'shutdown' } = {}) {
+    let cancelledRuns = 0;
+    for (const run of activeRuns) {
+      cancelledRuns += 1;
+      clearRunTimers(run);
+      scheduleRunTermination(run, 'SIGTERM');
+      run.postFinalForceKillTimer = setTimeout(() => {
+        scheduleRunTermination(run, 'SIGKILL');
+      }, 1000);
+      if (typeof run.postFinalForceKillTimer.unref === 'function') {
+        run.postFinalForceKillTimer.unref();
+      }
+    }
+    if (cancelledRuns > 0) {
+      console.info(
+        `cancel_active_runs reason=${reason} count=${cancelledRuns}`
+      );
+    }
+    return cancelledRuns;
+  }
 
   async function runAgentOneShot(prompt) {
     const globalAgent = getGlobalAgent();
@@ -102,8 +142,8 @@ function createAgentRunner(options) {
       documentPaths,
       onFinalResponse,
       onProgressUpdate,
-    } =
-      runOptions;
+      onSettled,
+    } = runOptions;
     const effectiveAgentId = resolveEffectiveAgentId(
       chatId,
       topicId,
@@ -193,15 +233,100 @@ function createAgentRunner(options) {
     console.info(
       `Agent start chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} thread=${threadId || 'new'}`
     );
+    const run = {
+      child: null,
+      droppedProgressUpdates: 0,
+      finalEmitted: false,
+      lifecycleState: 'streaming',
+      postFinalForceKillTimer: null,
+      postFinalKillTimer: null,
+      settled: false,
+    };
+    activeRuns.add(run);
     let output;
     let execError;
+    let fatalError = null;
     let streamedOutput = '';
     let streamedThreadId;
     let streamedFinalText;
-    let streamedFinalDelivered = false;
     let lastProgressFingerprint = '';
+    let finalSignalLogged = false;
+
+    const emitSettled = async (status) => {
+      if (typeof onSettled !== 'function') return;
+      try {
+        await Promise.resolve(
+          onSettled({
+            chatId,
+            topicId,
+            agentId: effectiveAgentId,
+            droppedProgressUpdates: run.droppedProgressUpdates,
+            finalEmitted: run.finalEmitted,
+            state: run.lifecycleState,
+            status,
+          })
+        );
+      } catch (err) {
+        console.warn('Failed to run onSettled callback:', err);
+      }
+    };
+
+    const schedulePostFinalKill = () => {
+      if (
+        run.settled
+        || run.postFinalKillTimer
+        || !run.finalEmitted
+        || !run.child
+        || typeof terminateChildProcess !== 'function'
+      ) {
+        return;
+      }
+
+      const delayMs = Math.max(0, Number(postFinalGraceMs) || 0);
+      run.postFinalKillTimer = setTimeout(() => {
+        if (run.settled || !run.child) return;
+        console.warn(
+          `post_final_kill chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} delay_ms=${delayMs}`
+        );
+        scheduleRunTermination(run, 'SIGTERM');
+        run.postFinalForceKillTimer = setTimeout(() => {
+          if (run.settled || !run.child) return;
+          scheduleRunTermination(run, 'SIGKILL');
+        }, 1000);
+        if (typeof run.postFinalForceKillTimer.unref === 'function') {
+          run.postFinalForceKillTimer.unref();
+        }
+      }, delayMs);
+      if (typeof run.postFinalKillTimer.unref === 'function') {
+        run.postFinalKillTimer.unref();
+      }
+    };
+
+    const emitFinalResponse = (text) => {
+      const normalizedText = String(text || '').trim();
+      if (!normalizedText || run.finalEmitted) return;
+      run.finalEmitted = true;
+      run.lifecycleState = 'final_emitted';
+      streamedFinalText = normalizedText;
+      console.info(
+        `final_emitted chat=${chatId} topic=${topicId || 'root'} agent=${agent.id}`
+      );
+      schedulePostFinalKill();
+      if (typeof onFinalResponse === 'function') {
+        Promise.resolve(onFinalResponse(normalizedText)).catch((err) => {
+          console.warn('Failed to stream final agent response:', err);
+        });
+      }
+    };
+
     const emitProgressLines = (lines) => {
       if (typeof onProgressUpdate !== 'function' || !Array.isArray(lines)) return;
+      if (run.finalEmitted) {
+        if (lines.length > 0) {
+          run.droppedProgressUpdates += 1;
+        }
+        return;
+      }
       const fingerprint = lines.join('\n');
       if (!fingerprint || fingerprint === lastProgressFingerprint) return;
       lastProgressFingerprint = fingerprint;
@@ -218,6 +343,10 @@ function createAgentRunner(options) {
         output = await execLocalStreaming('bash', ['-lc', commandToRun], {
           timeout: agentTimeoutMs,
           maxBuffer: agentMaxBuffer,
+          onSpawn: (child) => {
+            run.child = child;
+            schedulePostFinalKill();
+          },
           onStdout: (chunk) => {
             streamedOutput += chunk;
             const partial = agent.parseStreamingOutput(streamedOutput);
@@ -233,16 +362,8 @@ function createAgentRunner(options) {
                 emitProgressLines(partial.commentaryMessages);
               }
             }
-            if (
-              partial.sawFinal
-              && partial.text
-              && !streamedFinalDelivered
-            ) {
-              streamedFinalDelivered = true;
-              streamedFinalText = partial.text;
-              Promise.resolve(onFinalResponse(partial.text)).catch((err) => {
-                console.warn('Failed to stream final agent response:', err);
-              });
+            if (partial.sawFinal && partial.text) {
+              emitFinalResponse(partial.text);
             }
           },
         });
@@ -256,14 +377,24 @@ function createAgentRunner(options) {
       execError = err;
       if (err && typeof err.stdout === 'string' && err.stdout.trim()) {
         output = err.stdout;
+      } else if (run.finalEmitted && streamedFinalText) {
+        output = streamedOutput || streamedFinalText;
       } else {
-        throw err;
+        fatalError = err;
       }
     } finally {
       const elapsedMs = Date.now() - startedAt;
       console.info(
         `Agent finished chat=${chatId} topic=${topicId || 'root'} durationMs=${elapsedMs}`
       );
+    }
+    if (fatalError) {
+      run.settled = true;
+      run.lifecycleState = 'failed';
+      clearRunTimers(run);
+      activeRuns.delete(run);
+      await emitSettled('failed');
+      throw fatalError;
     }
     const parsed = agent.parseOutput(output);
     if (!parsed.threadId && streamedThreadId) {
@@ -273,12 +404,21 @@ function createAgentRunner(options) {
       parsed.text = streamedFinalText;
     }
     if (execError && !parsed.sawJson && !String(parsed.text || '').trim()) {
+      run.settled = true;
+      run.lifecycleState = 'failed';
+      clearRunTimers(run);
+      activeRuns.delete(run);
+      await emitSettled('failed');
       throw execError;
     }
     if (execError) {
-      console.warn(
-        `Agent exited non-zero; returning stdout chat=${chatId} topic=${topicId || 'root'} code=${execError.code || 'unknown'}`
-      );
+      if (run.finalEmitted && String(parsed.text || '').trim()) {
+        finalSignalLogged = true;
+      } else {
+        console.warn(
+          `Agent exited non-zero; returning stdout chat=${chatId} topic=${topicId || 'root'} code=${execError.code || 'unknown'}`
+        );
+      }
     }
     if (!parsed.threadId && typeof agent.listSessionsCommand === 'function') {
       try {
@@ -310,10 +450,19 @@ function createAgentRunner(options) {
         console.warn('Failed to persist threads:', err)
       );
     }
+    run.settled = true;
+    run.lifecycleState = 'settled';
+    clearRunTimers(run);
+    activeRuns.delete(run);
+    console.info(
+      `run_settled chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} final_emitted=${run.finalEmitted} dropped_progress_updates=${run.droppedProgressUpdates}${finalSignalLogged ? ' post_final_exit=true' : ''}`
+    );
+    await emitSettled('succeeded');
     return parsed.text || output;
   }
 
   return {
+    cancelActiveRuns,
     runAgentForChat,
     runAgentOneShot,
   };

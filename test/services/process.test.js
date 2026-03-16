@@ -77,6 +77,7 @@ test('process.js service', async (t) => {
     });
 
     await t.test('execLocalStreaming streams stdout chunks and resolves with full stdout', async () => {
+        let spawnedChild;
         mock.method(cp, 'spawn', (cmd, args, opts) => {
             assert.equal(cmd, 'bash');
             assert.deepEqual(args, ['-lc', 'echo hi']);
@@ -101,11 +102,15 @@ test('process.js service', async (t) => {
         const chunks = [];
         const result = await execLocalStreaming('bash', ['-lc', 'echo hi'], {
             cwd: '/tmp/demo',
+            onSpawn: (child) => {
+                spawnedChild = child;
+            },
             onStdout: (chunk) => chunks.push(chunk),
         });
 
         assert.equal(result, 'hello world');
         assert.deepEqual(chunks, ['hello ', 'world']);
+        assert.equal(spawnedChild.pid, 123);
     });
 
     await t.test('terminateChildProcess kills the process group on Unix', () => {

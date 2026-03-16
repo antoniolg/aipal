@@ -149,7 +149,7 @@ test('replyWithResponse materializes schedule tokens and appends confirmation', 
   const createdRuns = [];
   const ctx = {
     chat: { id: 123 },
-    message: { message_thread_id: 77 },
+    message: { message_thread_id: 77, is_topic_message: true },
     reply: async (text) => {
       replies.push(text);
     },
@@ -203,7 +203,7 @@ test('createReplyProgressReporter reuses a single Telegram message', async () =>
   const deleted = [];
   const ctx = {
     chat: { id: 123 },
-    message: { message_thread_id: 77 },
+    message: { message_thread_id: 77, is_topic_message: true },
     reply: async (text, options) => {
       sent.push({ text, options });
       return { message_id: 555 };
@@ -234,18 +234,99 @@ test('createReplyProgressReporter reuses a single Telegram message', async () =>
     formatError: () => '',
     imageDir: '/tmp/images',
     isPathInside: () => true,
-    markdownToTelegramHtml: () => '',
+    markdownToTelegramHtml: (value) =>
+      String(value)
+        .replace('**mirando**', '<b>mirando</b>')
+        .replace('`cambio`', '<code>cambio</code>'),
     resolveEffectiveAgentId: () => 'codex',
   });
 
   const reporter = service.createReplyProgressReporter(ctx);
-  await reporter.update(['mirando el repo']);
-  await reporter.update(['mirando el repo', 'preparando el cambio']);
+  await reporter.update(['**mirando** el repo']);
+  await reporter.update(['**mirando** el repo', 'preparando el `cambio`']);
   await reporter.finish();
 
   assert.equal(sent.length, 1);
   assert.equal(edited.length, 1);
+  assert.match(sent[0].text, /<b>mirando<\/b>/);
+  assert.match(edited[0].text, /<code>cambio<\/code>/);
   assert.equal(edited[0].messageId, 555);
   assert.equal(edited[0].options.message_thread_id, 77);
+  assert.equal(edited[0].options.parse_mode, 'HTML');
   assert.deepEqual(deleted, [{ chatId: 123, messageId: 555 }]);
+});
+
+test('replyWithResponse omits message_thread_id for general topic replies', async () => {
+  const replies = [];
+  const ctx = {
+    chat: { id: 123 },
+    message: { message_thread_id: 1, is_topic_message: true },
+    reply: async (text, options) => {
+      replies.push({ text, options });
+    },
+    replyWithPhoto: async () => {},
+    replyWithDocument: async () => {},
+  };
+
+  const service = createTelegramReplyService({
+    bot: { telegram: {} },
+    chunkMarkdown: () => ['Hello'],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    documentDir: '/tmp/docs',
+    extractDocumentTokens: () => ({ cleanedText: 'Hello', documentPaths: [] }),
+    extractImageTokens: () => ({ cleanedText: 'Hello', imagePaths: [] }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: 'Hello',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: () => true,
+    markdownToTelegramHtml: (value) => value,
+    resolveEffectiveAgentId: () => 'codex',
+  });
+
+  await service.replyWithResponse(ctx, 'ignored');
+
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].options.message_thread_id, undefined);
+});
+
+test('sendResponseToChat omits message_thread_id for general topic sends', async () => {
+  const sentMessages = [];
+
+  const service = createTelegramReplyService({
+    bot: {
+      telegram: {
+        sendDocument: async () => {},
+        sendMessage: async (_chatId, _text, options) => {
+          sentMessages.push(options);
+        },
+        sendPhoto: async () => {},
+      },
+    },
+    chunkMarkdown: () => ['part-1'],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    documentDir: '/tmp/docs',
+    extractDocumentTokens: () => ({ cleanedText: 'content', documentPaths: [] }),
+    extractImageTokens: () => ({ cleanedText: 'content', imagePaths: [] }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: 'content',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: () => true,
+    markdownToTelegramHtml: (value) => value,
+    resolveEffectiveAgentId: () => 'codex',
+  });
+
+  await service.sendResponseToChat(123, 'ignored', { topicId: 1 });
+
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].message_thread_id, undefined);
 });

@@ -64,6 +64,7 @@ Curated memory state is stored in:
 - If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/memory/state.json`
 
 Environment knobs:
+- `AIPAL_AGENT_POST_FINAL_GRACE_MS`: grace period after a streamed final answer before Aipal terminates a lingering agent subprocess (default: `2500`).
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N new captured events (default: `20`).
 - `AIPAL_MEMORY_RETRIEVAL_LIMIT`: maximum number of retrieved memory lines injected per request (default: `8`).
 

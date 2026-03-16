@@ -65,9 +65,14 @@ function initializeApp(options) {
     .catch((err) => console.warn('Failed to load config settings:', err));
 }
 
+function isWatchModeProcess() {
+  return process.execArgv.some((arg) => arg === '--watch' || arg.startsWith('--watch-'));
+}
+
 function installShutdownHooks(options) {
   const {
     bot,
+    cancelActiveRuns,
     getCronScheduler,
     getOneShotScheduler,
     getPersistPromises,
@@ -81,7 +86,12 @@ function installShutdownHooks(options) {
   function shutdown(signal) {
     if (shutdownStarted) return;
     shutdownStarted = true;
-    console.info(`Shutting down (${signal})...`);
+    const watchMode = isWatchModeProcess();
+    const shutdownMode = watchMode ? 'watch' : 'normal';
+    const persistTimeoutMs = watchMode ? 500 : 2000;
+    const forceExitDelayMs = watchMode ? 4000 : shutdownDrainTimeoutMs + 2000;
+
+    console.info(`Shutting down (${signal})... shutdown_mode=${shutdownMode}`);
 
     try {
       const cronScheduler = getCronScheduler();
@@ -109,6 +119,14 @@ function installShutdownHooks(options) {
       console.warn('Failed to trigger HTTP server stop:', err);
     }
 
+    if (watchMode && typeof cancelActiveRuns === 'function') {
+      try {
+        cancelActiveRuns({ reason: signal });
+      } catch (err) {
+        console.warn('Failed to cancel active runs:', err);
+      }
+    }
+
     try {
       bot.stop(signal);
     } catch (err) {
@@ -118,22 +136,24 @@ function installShutdownHooks(options) {
     const forceTimer = setTimeout(() => {
       console.warn('Forcing process exit after shutdown timeout.');
       process.exit(0);
-    }, shutdownDrainTimeoutMs + 2000);
+    }, forceExitDelayMs);
     if (typeof forceTimer.unref === 'function') forceTimer.unref();
 
     Promise.resolve()
       .then(async () => {
         const pending = Array.from(getQueues().values());
-        if (pending.length > 0) {
+        if (!watchMode && pending.length > 0) {
           console.info(`Waiting for ${pending.length} queued job(s) to finish...`);
           await Promise.race([
             Promise.allSettled(pending),
             new Promise((resolve) => setTimeout(resolve, shutdownDrainTimeoutMs)),
           ]);
+        } else if (watchMode && pending.length > 0) {
+          console.info(`Skipping queue drain in watch mode for ${pending.length} queued job(s).`);
         }
         await Promise.race([
           Promise.allSettled(getPersistPromises()),
-          new Promise((resolve) => setTimeout(resolve, 2000)),
+          new Promise((resolve) => setTimeout(resolve, persistTimeoutMs)),
         ]);
       })
       .catch((err) => {

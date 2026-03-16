@@ -53,6 +53,13 @@ function registerTextHandler(options) {
           typeof createReplyProgressReporter === 'function'
             ? createReplyProgressReporter(ctx)
             : null;
+        let uiClosed = false;
+        const finishUi = async () => {
+          if (uiClosed) return;
+          uiClosed = true;
+          stopTyping();
+          await progressReporter?.finish();
+        };
         const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
         const memoryThreadKey = buildMemoryThreadKey(
           chatId,
@@ -97,8 +104,11 @@ function registerTextHandler(options) {
               onFinalResponse: async (partialResponse) => {
                 if (responseSent) return;
                 responseSent = true;
-                stopTyping();
+                await finishUi();
                 await replyWithResponse(ctx, partialResponse);
+              },
+              onSettled: async () => {
+                await finishUi();
               },
             });
             await captureMemoryEvent({
@@ -111,7 +121,7 @@ function registerTextHandler(options) {
               text: extractMemoryText(response),
             });
             if (!responseSent) {
-              stopTyping();
+              await finishUi();
               await replyWithResponse(ctx, response);
             }
             return;
@@ -126,14 +136,14 @@ function registerTextHandler(options) {
             kind: 'text',
             text: extractMemoryText(output),
           });
-          stopTyping();
+          await finishUi();
           await replyWithResponse(ctx, output);
         } catch (err) {
           console.error(err);
-          stopTyping();
+          await finishUi();
           await replyWithError(ctx, `Error running /${slash.name}.`, err);
         } finally {
-          await progressReporter?.finish();
+          await finishUi();
         }
       });
       return;
@@ -145,6 +155,13 @@ function registerTextHandler(options) {
         typeof createReplyProgressReporter === 'function'
           ? createReplyProgressReporter(ctx)
           : null;
+      let uiClosed = false;
+      const finishUi = async () => {
+        if (uiClosed) return;
+        uiClosed = true;
+        stopTyping();
+        await progressReporter?.finish();
+      };
       const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
@@ -173,8 +190,11 @@ function registerTextHandler(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            stopTyping();
+            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+          },
+          onSettled: async () => {
+            await finishUi();
           },
         });
         await captureMemoryEvent({
@@ -187,15 +207,15 @@ function registerTextHandler(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
-          stopTyping();
+          await finishUi();
           await replyWithResponse(ctx, response);
         }
       } catch (err) {
         console.error(err);
-        stopTyping();
+        await finishUi();
         await replyWithError(ctx, 'Error processing response.', err);
       } finally {
-        await progressReporter?.finish();
+        await finishUi();
       }
     });
   });

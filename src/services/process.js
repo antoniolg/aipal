@@ -55,6 +55,7 @@ function execLocalStreaming(cmd, args, options = {}) {
   const {
     timeout,
     maxBuffer,
+    onSpawn,
     onStdout,
     onStderr,
     ...rest
@@ -66,6 +67,9 @@ function execLocalStreaming(cmd, args, options = {}) {
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    if (typeof onSpawn === 'function') {
+      onSpawn(child);
+    }
 
     let stdout = '';
     let stderr = '';

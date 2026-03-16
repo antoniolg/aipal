@@ -1,4 +1,8 @@
 const fs = require('fs/promises');
+const {
+  buildTelegramThreadExtra,
+  getTelegramMessageContext,
+} = require('./telegram-topics');
 
 function createTelegramReplyService(options) {
   const {
@@ -16,6 +20,22 @@ function createTelegramReplyService(options) {
     markdownToTelegramHtml,
     resolveEffectiveAgentId,
   } = options;
+
+  function escapeHtmlText(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderTelegramHtml(text) {
+    const formatted = markdownToTelegramHtml(text);
+    return formatted || escapeHtmlText(text);
+  }
+
+  function getReplyThreadExtra(ctx) {
+    return buildTelegramThreadExtra(getTelegramMessageContext(ctx?.message));
+  }
 
   async function replyWithError(ctx, label, err) {
     const detail = formatError(err);
@@ -50,6 +70,7 @@ function createTelegramReplyService(options) {
   function createProgressReporter(transport) {
     let progressMessageId = null;
     let lastText = '';
+    let closed = false;
     let queue = Promise.resolve();
 
     async function flush(action) {
@@ -64,20 +85,24 @@ function createTelegramReplyService(options) {
 
     return {
       async update(lines) {
+        if (closed) return;
         const text = formatProgressText(lines);
         if (!text || text === lastText) return;
+        const html = renderTelegramHtml(text);
 
         await flush(async () => {
+          if (closed) return;
           if (!progressMessageId) {
-            const message = await transport.send(text);
+            const message = await transport.send({ html, text });
             progressMessageId = message?.message_id || null;
           } else {
-            await transport.edit(progressMessageId, text);
+            await transport.edit(progressMessageId, { html, text });
           }
           lastText = text;
         });
       },
       async finish() {
+        closed = true;
         if (!progressMessageId) return;
         const messageId = progressMessageId;
         progressMessageId = null;
@@ -91,22 +116,39 @@ function createTelegramReplyService(options) {
 
   function createReplyProgressReporter(ctx) {
     const chatId = ctx?.chat?.id;
-    const topicId = ctx?.message?.message_thread_id;
-    const threadExtra = topicId ? { message_thread_id: topicId } : {};
+    const threadExtra = getReplyThreadExtra(ctx);
     return createProgressReporter({
-      send: async (text) => ctx.reply(text, threadExtra),
-      edit: async (messageId, text) =>
-        ctx.telegram.editMessageText(chatId, messageId, undefined, text, threadExtra),
+      send: async (payload) =>
+        ctx.reply(payload.html, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...threadExtra,
+        }),
+      edit: async (messageId, payload) =>
+        ctx.telegram.editMessageText(chatId, messageId, undefined, payload.html, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...threadExtra,
+        }),
       remove: async (messageId) => ctx.telegram.deleteMessage(chatId, messageId),
     });
   }
 
   function createChatProgressReporter(chatId, topicId) {
-    const threadExtra = topicId ? { message_thread_id: topicId } : {};
+    const threadExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
     return createProgressReporter({
-      send: async (text) => bot.telegram.sendMessage(chatId, text, threadExtra),
-      edit: async (messageId, text) =>
-        bot.telegram.editMessageText(chatId, messageId, undefined, text, threadExtra),
+      send: async (payload) =>
+        bot.telegram.sendMessage(chatId, payload.html, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...threadExtra,
+        }),
+      edit: async (messageId, payload) =>
+        bot.telegram.editMessageText(chatId, messageId, undefined, payload.html, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...threadExtra,
+        }),
       remove: async (messageId) => bot.telegram.deleteMessage(chatId, messageId),
     });
   }
@@ -156,8 +198,9 @@ function createTelegramReplyService(options) {
       afterImages,
       documentDir
     );
-    const topicId = ctx?.message?.message_thread_id;
+    const { topicId } = getTelegramMessageContext(ctx?.message);
     const chatId = ctx?.chat?.id;
+    const threadExtra = getReplyThreadExtra(ctx);
     const agentId =
       typeof resolveEffectiveAgentId === 'function' && chatId
         ? resolveEffectiveAgentId(chatId, topicId)
@@ -176,10 +219,11 @@ function createTelegramReplyService(options) {
       .join('\n\n');
     if (text) {
       for (const chunk of chunkMarkdown(text, 3000)) {
-        const formatted = markdownToTelegramHtml(chunk) || chunk;
+        const formatted = renderTelegramHtml(chunk);
         await ctx.reply(formatted, {
           parse_mode: 'HTML',
           disable_web_page_preview: true,
+          ...threadExtra,
         });
       }
     }
@@ -191,7 +235,7 @@ function createTelegramReplyService(options) {
           continue;
         }
         await fs.access(imagePath);
-        await ctx.replyWithPhoto({ source: imagePath });
+        await ctx.replyWithPhoto({ source: imagePath }, threadExtra);
       } catch (err) {
         console.warn('Failed to send image:', imagePath, err);
       }
@@ -204,13 +248,13 @@ function createTelegramReplyService(options) {
           continue;
         }
         await fs.access(documentPath);
-        await ctx.replyWithDocument({ source: documentPath });
+        await ctx.replyWithDocument({ source: documentPath }, threadExtra);
       } catch (err) {
         console.warn('Failed to send document:', documentPath, err);
       }
     }
     if (!text && uniqueImages.length === 0 && uniqueDocuments.length === 0) {
-      await ctx.reply('(no response)');
+      await ctx.reply('(no response)', threadExtra);
     }
   }
 
@@ -234,7 +278,7 @@ function createTelegramReplyService(options) {
 
   async function sendResponseToChat(chatId, response, sendOptions = {}) {
     const { topicId, agentId } = sendOptions;
-    const threadExtra = topicId ? { message_thread_id: topicId } : {};
+    const threadExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
     const { cleanedText: afterImages, imagePaths } = extractImageTokens(
       response || '',
       imageDir
@@ -257,7 +301,7 @@ function createTelegramReplyService(options) {
       .join('\n\n');
     if (text) {
       for (const chunk of chunkMarkdown(text, 3000)) {
-        const formatted = markdownToTelegramHtml(chunk) || chunk;
+        const formatted = renderTelegramHtml(chunk);
         await bot.telegram.sendMessage(chatId, formatted, {
           parse_mode: 'HTML',
           disable_web_page_preview: true,

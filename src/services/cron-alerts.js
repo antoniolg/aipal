@@ -1,3 +1,5 @@
+const { buildTelegramThreadExtra } = require('./telegram-topics');
+
 function formatTimestamp(value) {
   if (!value) return '(unknown)';
   return String(value).replace('T', ' ').replace('.000Z', 'Z');
@@ -38,7 +40,10 @@ function formatCronAlert(event) {
 function createCronAlertNotifier({ bot }) {
   return async function notifyCronAlert(event) {
     if (!event?.chatId) return;
-    const extra = event.topicId ? { message_thread_id: event.topicId } : undefined;
+    const extra = buildTelegramThreadExtra({
+      topicId: event.topicId,
+      forceTopic: true,
+    });
     await bot.telegram.sendMessage(event.chatId, formatCronAlert(event), extra);
   };
 }

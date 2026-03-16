@@ -85,6 +85,7 @@ const { prefixTextWithTimestamp, DEFAULT_TIME_ZONE } = require('./time-utils');
 const { installLogTimestamps } = require('./app/logging');
 const {
   AGENT_MAX_BUFFER,
+  AGENT_POST_FINAL_GRACE_MS,
   AGENT_TIMEOUT_MS,
   DOCUMENT_CLEANUP_INTERVAL_MS,
   DOCUMENT_DIR,
@@ -111,6 +112,7 @@ const {
   execLocal,
   execLocalStreaming,
   shellQuote,
+  terminateChildProcess,
   wrapCommandWithPty,
 } = require('./services/process');
 const { createEnqueue } = require('./services/queue');
@@ -262,15 +264,17 @@ const agentRunner = createAgentRunner({
   imageDir: IMAGE_DIR,
   memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
   persistThreads,
+  postFinalGraceMs: AGENT_POST_FINAL_GRACE_MS,
   prefixTextWithTimestamp,
   resolveEffectiveAgentId,
   resolveThreadId,
   shellQuote,
+  terminateChildProcess,
   threadTurns,
   wrapCommandWithPty,
   defaultTimeZone: DEFAULT_TIME_ZONE,
 });
-const { runAgentForChat, runAgentOneShot } = agentRunner;
+const { cancelActiveRuns, runAgentForChat, runAgentOneShot } = agentRunner;
 
 const telegramReplyService = createTelegramReplyService({
   bot,
@@ -520,6 +524,7 @@ bootstrapApp({
   installShutdownHooks: () =>
     installShutdownHooks({
       bot,
+      cancelActiveRuns,
       getCronScheduler: () => cronScheduler,
       getOneShotScheduler: () => oneShotScheduler,
       getPersistPromises: () => [threadsPersist, agentOverridesPersist, memoryPersist],
