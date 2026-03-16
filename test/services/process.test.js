@@ -6,6 +6,7 @@ const {
     execLocal,
     execLocalStreaming,
     shellQuote,
+    terminateChildProcess,
     wrapCommandWithPty,
 } = require('../../src/services/process');
 
@@ -80,11 +81,13 @@ test('process.js service', async (t) => {
             assert.equal(cmd, 'bash');
             assert.deepEqual(args, ['-lc', 'echo hi']);
             assert.equal(opts.cwd, '/tmp/demo');
+            assert.equal(opts.detached, true);
 
             const child = new EventEmitter();
             child.stdout = new EventEmitter();
             child.stderr = new EventEmitter();
             child.kill = () => {};
+            child.pid = 123;
 
             process.nextTick(() => {
                 child.stdout.emit('data', 'hello ');
@@ -105,20 +108,37 @@ test('process.js service', async (t) => {
         assert.deepEqual(chunks, ['hello ', 'world']);
     });
 
+    await t.test('terminateChildProcess kills the process group on Unix', () => {
+        const child = { pid: 4321, kill: mock.fn() };
+        const killMock = mock.method(process, 'kill', (pid, signal) => {
+            assert.equal(pid, -4321);
+            assert.equal(signal, 'SIGTERM');
+        });
+
+        terminateChildProcess(child, 'SIGTERM');
+
+        assert.equal(killMock.mock.calls.length, 1);
+        assert.equal(child.kill.mock.calls.length, 0);
+    });
+
     await t.test('execLocalStreaming rejects with timeout error including partial output', async () => {
+        const killCalls = [];
+        mock.method(process, 'kill', (pid, signal) => {
+            killCalls.push({ pid, signal });
+        });
         mock.method(cp, 'spawn', () => {
             const child = new EventEmitter();
             child.stdout = new EventEmitter();
             child.stderr = new EventEmitter();
-            child.kill = () => {
-                process.nextTick(() => {
-                    child.emit('close', null, 'SIGTERM');
-                });
-            };
+            child.kill = () => {};
+            child.pid = 9876;
 
             process.nextTick(() => {
                 child.stdout.emit('data', 'partial');
             });
+            setTimeout(() => {
+                child.emit('close', null, 'SIGTERM');
+            }, 10);
 
             return child;
         });
@@ -128,6 +148,7 @@ test('process.js service', async (t) => {
             (err) => {
                 assert.equal(err.code, 'ETIMEDOUT');
                 assert.equal(err.stdout, 'partial');
+                assert.deepEqual(killCalls, [{ pid: -9876, signal: 'SIGTERM' }]);
                 return true;
             }
         );

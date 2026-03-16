@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+### Fixed
+- Enforced timeout termination for PTY-backed agent runs by killing the full child process group, preventing stuck cron/topic queues.
+
 ## [0.3.1] - 2026-02-19
 ### Added
 - `/model reset` to clear the current agent model override and return to its default model.

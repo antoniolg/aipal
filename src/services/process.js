@@ -1,4 +1,5 @@
 const cp = require('child_process');
+const FORCE_KILL_GRACE_MS = 5000;
 
 function shellQuote(value) {
   const escaped = String(value).replace(/'/g, String.raw`'\''`);
@@ -8,6 +9,20 @@ function shellQuote(value) {
 function wrapCommandWithPty(command) {
   const python = 'import pty,sys; pty.spawn(["bash","-lc", sys.argv[1]])';
   return `python3 -c ${shellQuote(python)} ${shellQuote(command)}`;
+}
+
+function terminateChildProcess(child, signal = 'SIGTERM') {
+  if (!child) return;
+  try {
+    if (process.platform !== 'win32' && Number.isInteger(child.pid)) {
+      process.kill(-child.pid, signal);
+      return;
+    }
+  } catch {}
+
+  try {
+    child.kill(signal);
+  } catch {}
 }
 
 function execLocal(cmd, args, options = {}) {
@@ -48,6 +63,7 @@ function execLocalStreaming(cmd, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = cp.spawn(cmd, args, {
       ...rest,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -56,11 +72,16 @@ function execLocalStreaming(cmd, args, options = {}) {
     let settled = false;
     let killedByTimeout = false;
     let timeoutHandle = null;
+    let forceKillHandle = null;
 
     function cleanup() {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
         timeoutHandle = null;
+      }
+      if (forceKillHandle) {
+        clearTimeout(forceKillHandle);
+        forceKillHandle = null;
       }
     }
 
@@ -78,9 +99,7 @@ function execLocalStreaming(cmd, args, options = {}) {
       if (maxBuffer && Buffer.byteLength(next, 'utf8') > maxBuffer) {
         const overflowErr = new Error(`Command output exceeded maxBuffer of ${maxBuffer} bytes`);
         overflowErr.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
-        try {
-          child.kill('SIGKILL');
-        } catch {}
+        terminateChildProcess(child, 'SIGKILL');
         finishError(overflowErr);
         return target;
       }
@@ -90,9 +109,13 @@ function execLocalStreaming(cmd, args, options = {}) {
     if (timeout) {
       timeoutHandle = setTimeout(() => {
         killedByTimeout = true;
-        try {
-          child.kill('SIGTERM');
-        } catch {}
+        terminateChildProcess(child, 'SIGTERM');
+        forceKillHandle = setTimeout(() => {
+          terminateChildProcess(child, 'SIGKILL');
+        }, FORCE_KILL_GRACE_MS);
+        if (typeof forceKillHandle.unref === 'function') {
+          forceKillHandle.unref();
+        }
       }, timeout);
       if (typeof timeoutHandle.unref === 'function') {
         timeoutHandle.unref();
@@ -165,5 +188,6 @@ module.exports = {
   execLocal,
   execLocalStreaming,
   shellQuote,
+  terminateChildProcess,
   wrapCommandWithPty,
 };
