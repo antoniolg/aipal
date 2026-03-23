@@ -108,7 +108,7 @@ function registerMediaHandlers(options) {
         if (err && err.code === 'ENOENT') {
           await replyWithError(
             ctx,
-            "I can't find parakeet-mlx. Install it and try again.",
+            "I can't find mlx_whisper. Install the mlx-whisper package and try again.",
             err
           );
         } else {

@@ -10,13 +10,13 @@ Minimal Telegram bot that forwards messages to a local CLI agent (Codex by defau
 - Runs your configured CLI agent for every message
 - Queues requests per chat to avoid overlapping runs
 - Keeps agent session state per agent when JSON output is detected
-- Handles text, audio (via Parakeet), images, and documents
+- Handles text, audio (via `mlx_whisper`), images, and documents
 - Supports `/thinking`, `/agent`, and `/cron` for runtime tweaks
 
 ## Requirements
 - Node.js 24+
 - Agent CLI on PATH (default: `codex`, or `claude` / `gemini` / `opencode` when configured)
-- Audio (optional): `parakeet-mlx` + `ffmpeg`
+- Audio (optional): `mlx_whisper` (`mlx-whisper`) + `ffmpeg`
 
 ## Quick start
 ```bash
@@ -38,7 +38,7 @@ Open Telegram, send `/start`, then any message.
 
 ## Usage (Telegram)
 - Text: send a message and get the agent response
-- Audio: send a voice note or audio file (transcribed with Parakeet)
+- Audio: send a voice note or audio file (transcribed with `mlx_whisper`)
 - Images: send a photo or image file (caption becomes the prompt)
 - Documents: send a file (caption becomes the prompt)
 - `/reset`: clear the current agent session (drops the stored session id for this agent) and trigger memory curation
@@ -184,7 +184,7 @@ To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of T
 - Images are downloaded into the image folder and included in the prompt
 
 ## Troubleshooting
-- `ENOENT parakeet-mlx`: install `parakeet-mlx` and ensure it is on PATH.
+- `ENOENT mlx_whisper`: install `mlx-whisper` and ensure `mlx_whisper` is on PATH.
 - `Error processing response.`: check that `codex` is installed and accessible on PATH.
 - Telegram `ECONNRESET`: usually transient network, retry.
 
