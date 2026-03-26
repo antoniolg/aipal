@@ -105,8 +105,6 @@ const {
   WHISPER_LANGUAGE,
   WHISPER_MODEL,
   WHISPER_TIMEOUT_MS,
-  HTTP_PORT,
-  HTTP_AUTH_TOKEN,
 } = require('./app/env');
 const { createAppState } = require('./app/state');
 const {
@@ -382,35 +380,6 @@ const {
   startTyping,
 } = telegramReplyService;
 
-const httpServerService = createHttpServerService({
-  port: HTTP_PORT,
-  authToken: HTTP_AUTH_TOKEN,
-  onMessageReceived: async (payload) => {
-    const targetChatId =
-      payload.chatId ||
-      cronDefaultChatId ||
-      (allowedUsers.size > 0 ? Array.from(allowedUsers)[0] : null);
-
-    if (!targetChatId) {
-      throw new Error(
-        'No target chatId configured (need either payload.chatId, cronChatId config, or ALLOWED_USERS array)'
-      );
-    }
-    const topicId = payload.topicId;
-    const topicKey = buildTopicKey(targetChatId, topicId);
-    await enqueue(topicKey, async () => {
-      const response = await runAgentForChat(targetChatId, payload.text, {
-        agentId: payload.agent ? normalizeAgent(payload.agent) : undefined,
-        topicId,
-      });
-      await sendResponseToChat(targetChatId, response, {
-        agentId: payload.agent ? normalizeAgent(payload.agent) : undefined,
-        topicId,
-      });
-    });
-  },
-});
-
 const handleCronTrigger = createCronHandler({
   bot,
   buildTopicKey,
@@ -639,6 +608,5 @@ bootstrapApp({
         approvalService.shutdown();
         await codexAppServerClient.shutdown();
       },
-      stopHttpServer: httpServerService.stop,
     }),
 });

@@ -42,7 +42,6 @@ test('installShutdownHooks skips queue drain and cancels active runs in watch mo
     getPersistPromises: () => [Promise.resolve()],
     getQueues: () => new Map([['chat:1', unresolvedQueue]]),
     shutdownDrainTimeoutMs: 10_000,
-    stopHttpServer: async () => {},
   });
 
   shutdown('SIGTERM');

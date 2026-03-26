@@ -14,15 +14,10 @@ function initializeApp(options) {
     startOneShotScheduler,
     startDocumentCleanup,
     startImageCleanup,
-    startHttpServer,
   } = options;
 
   startImageCleanup();
   startDocumentCleanup();
-
-  if (startHttpServer) {
-    startHttpServer();
-  }
 
   loadThreads()
     .then((loaded) => {
@@ -79,7 +74,6 @@ function installShutdownHooks(options) {
     getQueues,
     shutdownDrainTimeoutMs,
     stopCodexAppServer,
-    stopHttpServer,
   } = options;
 
   let shutdownStarted = false;
@@ -120,14 +114,6 @@ function installShutdownHooks(options) {
       }
     } catch (err) {
       console.warn('Failed to trigger codex app server stop:', err);
-    }
-
-    try {
-      if (stopHttpServer) {
-        stopHttpServer().catch((err) => console.warn('Failed to stop HTTP server:', err));
-      }
-    } catch (err) {
-      console.warn('Failed to trigger HTTP server stop:', err);
     }
 
     if (watchMode && typeof cancelActiveRuns === 'function') {
