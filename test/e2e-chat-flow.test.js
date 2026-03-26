@@ -279,3 +279,80 @@ test('text handler sends final response before finishing progress UI', async () 
 
   assert.deepEqual(events, ['reply', 'finish']);
 });
+
+test('text handler steers an active codex-app run instead of enqueuing a new turn', async () => {
+  const bot = {
+    handlers: new Map(),
+    on(event, handler) {
+      this.handlers.set(event, handler);
+    },
+  };
+
+  const queues = new Map();
+  const enqueue = createEnqueue(queues);
+  const replies = [];
+  const capturedEvents = [];
+  const steerCalls = [];
+  let runCalls = 0;
+
+  registerTextHandler({
+    bot,
+    buildMemoryThreadKey: buildThreadKey,
+    buildTopicKey,
+    captureMemoryEvent: async (event) => {
+      capturedEvents.push(event);
+    },
+    consumeScriptContext: () => '',
+    enqueue,
+    extractMemoryText: (value) => String(value || ''),
+    formatScriptContext: () => '',
+    getTopicId: () => undefined,
+    lastScriptOutputs: new Map(),
+    parseSlashCommand,
+    replyWithError: async () => {},
+    replyWithResponse: async () => {},
+    resolveEffectiveAgentId: () => 'codex-app',
+    runAgentForChat: async () => {
+      runCalls += 1;
+      return 'no debería ejecutarse';
+    },
+    runScriptCommand: async () => '',
+    scriptManager: { getScriptMetadata: async () => ({}) },
+    steerActiveRun: async (chatId, topicId, text, agentId) => {
+      steerCalls.push({ chatId, topicId, text, agentId });
+      return { status: 'steered', agentId };
+    },
+    startTyping: () => () => {},
+  });
+
+  const textHandler = bot.handlers.get('text');
+  assert.ok(textHandler);
+
+  const ctx = {
+    chat: { id: 54321 },
+    message: { text: 'Además, céntrate en los tests' },
+    reply: async (value) => {
+      replies.push(value);
+    },
+    sendChatAction: async () => {},
+  };
+
+  textHandler(ctx);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(steerCalls, [
+    {
+      chatId: 54321,
+      topicId: undefined,
+      text: 'Además, céntrate en los tests',
+      agentId: 'codex-app',
+    },
+  ]);
+  assert.equal(runCalls, 0);
+  assert.deepEqual(replies, ['Added to the active run.']);
+  assert.deepEqual(
+    capturedEvents.map((event) => `${event.role}:${event.kind}`),
+    ['user:text']
+  );
+  assert.equal(queues.size, 0);
+});

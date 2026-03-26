@@ -24,6 +24,7 @@ function createAgentRunner(options) {
     resolveThreadId,
     runSessionBackedChatTurn,
     runSessionBackedOneShot,
+    steerSessionBackedTurn,
     stopSessionBackedTurn,
     shellQuote,
     terminateChildProcess,
@@ -121,6 +122,24 @@ function createAgentRunner(options) {
       return { status: 'queued', agentId: effectiveAgentId };
     }
     return { status: 'stopping', agentId: effectiveAgentId };
+  }
+
+  async function steerActiveRun(chatId, topicId, text, overrideAgentId) {
+    const effectiveAgentId = resolveEffectiveAgentId(
+      chatId,
+      topicId,
+      overrideAgentId
+    );
+    const run = activeRunsByKey.get(
+      buildActiveRunKey(chatId, topicId, effectiveAgentId)
+    );
+    if (!run || run.settled || run.finalEmitted) {
+      return { status: 'idle', agentId: effectiveAgentId };
+    }
+    if (typeof run.steer !== 'function') {
+      return { status: 'unsupported', agentId: effectiveAgentId };
+    }
+    return run.steer({ text });
   }
 
   async function runAgentOneShot(prompt) {
@@ -324,10 +343,16 @@ function createAgentRunner(options) {
       droppedProgressUpdates: 0,
       finalEmitted: false,
       lifecycleState: 'streaming',
+      pendingSteers: [],
       postFinalForceKillTimer: null,
       postFinalKillTimer: null,
       session: null,
       settled: false,
+      steer:
+        agent.backend === 'app-server'
+          ? async () => ({ status: 'unsupported' })
+          : null,
+      steerChain: Promise.resolve(),
       stop:
         agent.backend === 'app-server'
           ? async () => ({ status: 'not_ready' })
@@ -443,6 +468,70 @@ function createAgentRunner(options) {
       && typeof runSessionBackedChatTurn === 'function'
     ) {
       try {
+        const sendSteer = ({ text }) => {
+          const normalizedText = String(text || '').trim();
+          if (!normalizedText) {
+            return Promise.resolve({
+              status: 'ignored',
+              agentId: agent.id,
+            });
+          }
+          if (run.settled || run.finalEmitted) {
+            return Promise.resolve({
+              status: 'idle',
+              agentId: agent.id,
+            });
+          }
+          if (run.stopRequested || run.stopPending) {
+            return Promise.resolve({
+              status: 'stopping',
+              agentId: agent.id,
+            });
+          }
+          if (
+            typeof steerSessionBackedTurn !== 'function'
+            || !run.session?.threadId
+            || !run.session?.turnId
+          ) {
+            run.pendingSteers.push(normalizedText);
+            return Promise.resolve({
+              status: 'queued',
+              agentId: agent.id,
+            });
+          }
+          run.steerChain = run.steerChain.then(async () => {
+            await steerSessionBackedTurn({
+              agentId: agent.id,
+              input: [{ type: 'text', text: normalizedText }],
+              threadId: run.session.threadId,
+              turnId: run.session.turnId,
+            });
+          });
+          return run.steerChain.then(() => ({
+            status: 'steered',
+            agentId: agent.id,
+          }));
+        };
+
+        const flushPendingSteers = () => {
+          if (
+            run.settled
+            || run.finalEmitted
+            || run.stopRequested
+            || run.stopPending
+            || run.pendingSteers.length === 0
+          ) {
+            return;
+          }
+          const queuedTexts = run.pendingSteers.splice(0);
+          for (const pendingText of queuedTexts) {
+            void sendSteer({ text: pendingText }).catch((err) => {
+              console.warn('Failed to flush queued steer input:', err);
+            });
+          }
+        };
+
+        run.steer = sendSteer;
         run.stop = async () => {
           if (
             typeof stopSessionBackedTurn !== 'function'
@@ -481,7 +570,9 @@ function createAgentRunner(options) {
                 run.stopPending = false;
                 console.warn('Failed to stop run after startup:', err);
               });
+              return;
             }
+            flushPendingSteers();
           },
           prompt: finalPrompt,
           topicId,
@@ -655,6 +746,7 @@ function createAgentRunner(options) {
     cancelActiveRuns,
     runAgentForChat,
     runAgentOneShot,
+    steerActiveRun,
     stopActiveRun,
   };
 }

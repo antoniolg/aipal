@@ -115,6 +115,7 @@ function createCodexAppServerClient(options = {}) {
   }
 
   function createTurnContext({
+    includeAgentDeltas = true,
     onApprovalResolved,
     onFinalResponse,
     onTurnStarted,
@@ -171,6 +172,7 @@ function createCodexAppServerClient(options = {}) {
       completed: false,
       completion: deferred.promise,
       finalEmitted: false,
+      includeAgentDeltas,
       lastAgentText: '',
       onApprovalResolved,
       onFinalResponse,
@@ -263,6 +265,9 @@ function createCodexAppServerClient(options = {}) {
         const nextText = `${deltaTexts.get(itemId) || ''}${String(delta || '')}`;
         deltaTexts.set(itemId, nextText);
         context.lastAgentText = nextText || context.lastAgentText;
+        if (!context.includeAgentDeltas) {
+          return;
+        }
         const phase = itemPhases.get(itemId);
         if (phase === 'final_answer') {
           context.updateFinal(itemId, nextText);
@@ -602,6 +607,7 @@ function createCodexAppServerClient(options = {}) {
       approvalPolicy = 'on-request',
       cwd: turnCwd = process.cwd(),
       effort,
+      includeAgentDeltas = true,
       input,
       model,
       onApprovalResolved,
@@ -615,6 +621,7 @@ function createCodexAppServerClient(options = {}) {
 
     const resolvedThreadId = await createThread(threadId, model);
     const context = createTurnContext({
+      includeAgentDeltas,
       onApprovalResolved,
       onFinalResponse,
       onTurnStarted,
@@ -682,6 +689,22 @@ function createCodexAppServerClient(options = {}) {
     });
   }
 
+  async function steerTurn({ expectedTurnId, input, threadId }) {
+    if (!threadId || !expectedTurnId) {
+      throw createError(
+        'threadId and expectedTurnId are required to steer a turn'
+      );
+    }
+    if (!Array.isArray(input) || input.length === 0) {
+      throw createError('input is required to steer a turn');
+    }
+    return request('turn/steer', {
+      expectedTurnId: String(expectedTurnId),
+      input,
+      threadId: String(threadId),
+    });
+  }
+
   async function shutdown() {
     const error = createError('Codex app-server client shut down');
     rejectPendingResponses(error);
@@ -708,6 +731,7 @@ function createCodexAppServerClient(options = {}) {
     runChatTurn,
     runOneShot,
     shutdown,
+    steerTurn,
   };
 }
 

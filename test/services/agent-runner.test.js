@@ -335,3 +335,103 @@ test('stopActiveRun queues an early stop until the codex-app turn is ready', asy
     },
   ]);
 });
+
+test('steerActiveRun sends steer requests to an active codex-app turn', async () => {
+  let resolveTurn;
+  const turnDone = new Promise((resolve) => {
+    resolveTurn = resolve;
+  });
+  const steerCalls = [];
+
+  const { runner } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      options.onTurnStarted({ threadId: 'thread-steer', turnId: 'turn-steer' });
+      await turnDone;
+      return { text: 'listo', threadId: 'thread-steer', turnId: 'turn-steer' };
+    },
+    steerSessionBackedTurn: async (options) => {
+      steerCalls.push(options);
+      resolveTurn();
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(91, 'hola', {
+    agentId: 'codex-app',
+  });
+
+  let result = await runner.steerActiveRun(91, undefined, 'y mira los tests', 'codex-app');
+  for (let i = 0; i < 10 && result.status === 'idle'; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    result = await runner.steerActiveRun(91, undefined, 'y mira los tests', 'codex-app');
+  }
+
+  await runPromise;
+
+  assert.equal(result.status, 'steered');
+  assert.deepEqual(steerCalls, [
+    {
+      agentId: 'codex-app',
+      input: [{ type: 'text', text: 'y mira los tests' }],
+      threadId: 'thread-steer',
+      turnId: 'turn-steer',
+    },
+  ]);
+});
+
+test('steerActiveRun queues steer input until the codex-app turn is ready', async () => {
+  let resolveTurn;
+  const turnDone = new Promise((resolve) => {
+    resolveTurn = resolve;
+  });
+  const steerCalls = [];
+
+  const { runner } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      await new Promise((resolve) => setImmediate(resolve));
+      options.onTurnStarted({ threadId: 'thread-queued-steer', turnId: 'turn-queued-steer' });
+      await turnDone;
+      return {
+        text: 'listo',
+        threadId: 'thread-queued-steer',
+        turnId: 'turn-queued-steer',
+      };
+    },
+    steerSessionBackedTurn: async (options) => {
+      steerCalls.push(options);
+      resolveTurn();
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(92, 'hola', {
+    agentId: 'codex-app',
+  });
+
+  let result = await runner.steerActiveRun(92, undefined, 'ten en cuenta el diff', 'codex-app');
+  for (let i = 0; i < 10 && result.status === 'idle'; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    result = await runner.steerActiveRun(
+      92,
+      undefined,
+      'ten en cuenta el diff',
+      'codex-app'
+    );
+  }
+
+  await runPromise;
+
+  assert.equal(result.status, 'queued');
+  assert.deepEqual(steerCalls, [
+    {
+      agentId: 'codex-app',
+      input: [{ type: 'text', text: 'ten en cuenta el diff' }],
+      threadId: 'thread-queued-steer',
+      turnId: 'turn-queued-steer',
+    },
+  ]);
+});

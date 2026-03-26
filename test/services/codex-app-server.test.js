@@ -448,6 +448,111 @@ test('codex app server client clears stale tool progress when the item completes
   await client.shutdown();
 });
 
+test('codex app server client can ignore agent deltas and emit only completed commentary', async () => {
+  const progressUpdates = [];
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-complete-only' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-complete-only' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/started',
+          params: {
+            threadId: 'thread-complete-only',
+            turn: { id: 'turn-complete-only' },
+          },
+        });
+        state.send({
+          method: 'item/started',
+          params: {
+            threadId: 'thread-complete-only',
+            turnId: 'turn-complete-only',
+            item: { id: 'msg-1', type: 'agentMessage', phase: 'commentary' },
+          },
+        });
+        state.send({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-complete-only',
+            turnId: 'turn-complete-only',
+            itemId: 'msg-1',
+            delta: 'trozo 1',
+          },
+        });
+        state.send({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-complete-only',
+            turnId: 'turn-complete-only',
+            itemId: 'msg-1',
+            delta: ' y trozo 2',
+          },
+        });
+        state.send({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-complete-only',
+            turnId: 'turn-complete-only',
+            item: {
+              id: 'msg-1',
+              type: 'agentMessage',
+              phase: 'commentary',
+              text: 'mensaje completo',
+            },
+          },
+        });
+        state.send({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-complete-only',
+            turnId: 'turn-complete-only',
+            item: {
+              id: 'msg-final',
+              type: 'agentMessage',
+              phase: 'final_answer',
+              text: 'hecho',
+            },
+          },
+        });
+        state.send({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-complete-only',
+            turn: { id: 'turn-complete-only', status: 'completed' },
+          },
+        });
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const result = await client.runChatTurn({
+    cwd: '/tmp/demo',
+    includeAgentDeltas: false,
+    input: [{ type: 'text', text: 'hola' }],
+    onProgressUpdate: (payload) => {
+      progressUpdates.push(payload);
+    },
+  });
+
+  assert.equal(result.text, 'hecho');
+  assert.deepEqual(progressUpdates, [{ mode: 'raw', text: 'mensaje completo' }]);
+
+  await client.shutdown();
+});
+
 test('codex app server client respawns after the server exits', async () => {
   let spawnCount = 0;
   const logger = { warn() {} };
@@ -507,6 +612,39 @@ test('codex app server client exposes interruptTurn', async () => {
   assert.deepEqual(harness.spawns[0].messages[2].params, {
     threadId: 'thread-1',
     turnId: 'turn-1',
+  });
+
+  await client.shutdown();
+});
+
+test('codex app server client exposes steerTurn', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'turn/steer') {
+      state.send({ id: message.id, result: { turnId: 'turn-1' } });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.steerTurn({
+    expectedTurnId: 'turn-1',
+    input: [{ type: 'text', text: 'Añade esta nota' }],
+    threadId: 'thread-1',
+  });
+
+  assert.equal(harness.spawns[0].messages[2].method, 'turn/steer');
+  assert.deepEqual(harness.spawns[0].messages[2].params, {
+    expectedTurnId: 'turn-1',
+    input: [{ type: 'text', text: 'Añade esta nota' }],
+    threadId: 'thread-1',
   });
 
   await client.shutdown();

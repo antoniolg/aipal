@@ -294,6 +294,7 @@ const agentRunner = createAgentRunner({
       approvalPolicy: 'on-request',
       cwd: options.cwd,
       effort: options.effort,
+      includeAgentDeltas: options.chatId > 0,
       input: buildCodexAppInputs(options.prompt, options.imagePaths),
       model: options.model,
       onApprovalResolved: ({ requestId, threadId }) => {
@@ -324,6 +325,16 @@ const agentRunner = createAgentRunner({
       sandboxPolicy: { type: 'dangerFullAccess' },
     });
   },
+  steerSessionBackedTurn: async (options) => {
+    if (options.agentId !== AGENT_CODEX_APP) {
+      throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
+    }
+    return codexAppServerClient.steerTurn({
+      expectedTurnId: options.turnId,
+      input: options.input,
+      threadId: options.threadId,
+    });
+  },
   stopSessionBackedTurn: async (options) => {
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
@@ -339,7 +350,13 @@ const agentRunner = createAgentRunner({
   wrapCommandWithPty,
   defaultTimeZone: DEFAULT_TIME_ZONE,
 });
-const { cancelActiveRuns, runAgentForChat, runAgentOneShot, stopActiveRun } = agentRunner;
+const {
+  cancelActiveRuns,
+  runAgentForChat,
+  runAgentOneShot,
+  steerActiveRun,
+  stopActiveRun,
+} = agentRunner;
 
 const telegramReplyService = createTelegramReplyService({
   bot,
@@ -571,6 +588,7 @@ registerHandlers({
   replyWithTranscript,
   resolveEffectiveAgentId,
   runAgentForChat,
+  steerActiveRun,
   runScriptCommand,
   safeUnlink,
   scriptManager,

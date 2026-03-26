@@ -18,10 +18,11 @@ function registerTextHandler(options) {
     runAgentForChat,
     runScriptCommand,
     scriptManager,
+    steerActiveRun,
     startTyping,
   } = options;
 
-  bot.on('text', (ctx) => {
+  bot.on('text', async (ctx) => {
     const chatId = ctx.chat.id;
     const topicId = getTopicId(ctx);
     const topicKey = buildTopicKey(chatId, topicId);
@@ -154,6 +155,48 @@ function registerTextHandler(options) {
       return;
     }
 
+    const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
+    if (
+      effectiveAgentId === 'codex-app'
+      && typeof steerActiveRun === 'function'
+    ) {
+      try {
+        const result = await steerActiveRun(
+          chatId,
+          topicId,
+          text,
+          effectiveAgentId
+        );
+        if (result?.status === 'steered' || result?.status === 'queued') {
+          const memoryThreadKey = buildMemoryThreadKey(
+            chatId,
+            topicId,
+            effectiveAgentId
+          );
+          await captureMemoryEvent({
+            threadKey: memoryThreadKey,
+            chatId,
+            topicId,
+            agentId: effectiveAgentId,
+            role: 'user',
+            kind: 'text',
+            text,
+          });
+
+          const confirmation =
+            result.status === 'queued'
+              ? 'I will add that as soon as the active run finishes starting.'
+              : 'Added to the active run.';
+          await ctx.reply(confirmation);
+          return;
+        }
+      } catch (err) {
+        console.error(err);
+        await replyWithError(ctx, 'Error processing response.', err);
+        return;
+      }
+    }
+
     enqueue(topicKey, async () => {
       const stopTyping = startTyping(ctx);
       const progressReporter =
@@ -167,7 +210,6 @@ function registerTextHandler(options) {
         stopTyping();
         await progressReporter?.finish();
       };
-      const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
         topicId,
