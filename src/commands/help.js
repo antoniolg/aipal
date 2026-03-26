@@ -14,7 +14,7 @@ function registerHelpCommands(options) {
   bot.command('help', async (ctx) => {
     const builtIn = [
       '/start - Hello world',
-      '/agent <name> - Switch agent (codex, claude, gemini, opencode)',
+      '/agent <name> - Switch agent (codex, codex-app, claude, gemini, opencode)',
       '/thinking <level> - Set reasoning effort',
       '/model [model_id|reset] - View/set/reset model for current agent',
       '/memory [status|tail|search|curate] - Memory capture + retrieval + curation',

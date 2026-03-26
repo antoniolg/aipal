@@ -9,17 +9,18 @@ This bot stores a minimal JSON config with the values set by `/agent`.
 ## Schema
 ```json
 {
-  "agent": "codex",
+  "agent": "codex-app",
   "models": {
-    "codex": "gpt-5"
+    "codex": "gpt-5",
+    "codex-app": "gpt-5.4-codex"
   },
   "cronChatId": 123456789
 }
 ```
 
 ## Fields
-- `agent`: which CLI to run (`codex`, `claude`, `gemini`, or `opencode`).
-- `models` (optional): a map of agent id → model id, set via `/model` and cleared per-agent via `/model reset`.
+- `agent`: which local agent backend to run (`codex`, `codex-app`, `claude`, `gemini`, or `opencode`).
+- `models` (optional): a map of agent id → model id, set via `/model` and cleared per-agent via `/model reset`. For `codex-app`, Aipal lists models through the app-server `model/list` RPC.
 - `cronChatId` (optional): Telegram chat id used for cron job messages. You can get it from `/cron chatid`.
 
 ## Agent Overrides file (optional)
@@ -54,6 +55,7 @@ Every conversation is captured automatically into per-thread JSONL files:
 - If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/memory/threads/*.jsonl`
 
 The key format is `chatId:topicId:agentId`, so multiple agents can write memory in parallel without sharing raw logs.
+That separation also means `codex` and `codex-app` keep distinct sessions and retrieval histories even inside the same chat/topic.
 
 An SQLite index is also maintained automatically:
 - `~/.config/aipal/memory/index.sqlite`

@@ -38,6 +38,7 @@ function createHttpServerService(options) {
 
                 // Forward to the bot application
                 await onMessageReceived({
+                    agent: typeof payload.agent === 'string' ? payload.agent : null,
                     text: payload.text,
                     topicId: payload.topicId,
                     chatId: payload.chatId,

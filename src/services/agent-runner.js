@@ -22,6 +22,8 @@ function createAgentRunner(options) {
     prefixTextWithTimestamp,
     resolveEffectiveAgentId,
     resolveThreadId,
+    runSessionBackedChatTurn,
+    runSessionBackedOneShot,
     shellQuote,
     terminateChildProcess,
     threadTurns,
@@ -71,18 +73,41 @@ function createAgentRunner(options) {
     const globalAgent = getGlobalAgent();
     const agent = getAgent(globalAgent);
     const thinking = getGlobalThinking();
+    const model = getGlobalModels()[globalAgent];
     let promptText = String(prompt || '');
     if (agent.id === 'claude') {
       promptText = prefixTextWithTimestamp(promptText, {
         timeZone: defaultTimeZone,
       });
     }
+
+    if (
+      agent.backend === 'app-server'
+      && typeof runSessionBackedOneShot === 'function'
+    ) {
+      console.info(`Agent one-shot start agent=${getAgentLabel(globalAgent)}`);
+      const startedAt = Date.now();
+      try {
+        const result = await runSessionBackedOneShot({
+          agentId: agent.id,
+          effort: thinking,
+          model,
+          prompt: promptText,
+        });
+        return String(result?.text || '').trim();
+      } finally {
+        const elapsedMs = Date.now() - startedAt;
+        console.info(`Agent one-shot finished durationMs=${elapsedMs}`);
+      }
+    }
+
     const promptBase64 = Buffer.from(promptText, 'utf8').toString('base64');
     const promptExpression = '"$PROMPT"';
     const agentCmd = agent.buildCommand({
       prompt: promptText,
       promptExpression,
       threadId: undefined,
+      model,
       thinking,
     });
 
@@ -209,23 +234,29 @@ function createAgentRunner(options) {
     );
     const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
     const promptExpression = '"$PROMPT"';
-    const agentCmd = agent.buildCommand({
-      prompt: finalPrompt,
-      promptExpression,
-      threadId,
-      thinking,
-      model: getGlobalModels()[effectiveAgentId],
-    });
-    const command = [
-      `PROMPT_B64=${shellQuote(promptBase64)};`,
-      'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
-      `${agentCmd}`,
-    ].join(' ');
+    const model = getGlobalModels()[effectiveAgentId];
+    const agentCmd =
+      agent.backend === 'app-server'
+        ? null
+        : agent.buildCommand({
+          prompt: finalPrompt,
+          promptExpression,
+          threadId,
+          thinking,
+          model,
+        });
+    const command = agentCmd
+      ? [
+        `PROMPT_B64=${shellQuote(promptBase64)};`,
+        'PROMPT=$(printf %s "$PROMPT_B64" | base64 --decode);',
+        `${agentCmd}`,
+      ].join(' ')
+      : '';
     let commandToRun = command;
-    if (agent.needsPty) {
+    if (agentCmd && agent.needsPty) {
       commandToRun = wrapCommandWithPty(commandToRun);
     }
-    if (agent.mergeStderr) {
+    if (agentCmd && agent.mergeStderr) {
       commandToRun = `${commandToRun} 2>&1`;
     }
 
@@ -334,6 +365,54 @@ function createAgentRunner(options) {
         console.warn('Failed to stream agent progress update:', err);
       });
     };
+
+    if (
+      agent.backend === 'app-server'
+      && typeof runSessionBackedChatTurn === 'function'
+    ) {
+      try {
+        const result = await runSessionBackedChatTurn({
+          agentId: agent.id,
+          chatId,
+          cwd: process.cwd(),
+          documentPaths: documentPaths || [],
+          effort: thinking,
+          imagePaths: imagePaths || [],
+          model,
+          onFinalResponse: emitFinalResponse,
+          onProgressUpdate: emitProgressLines,
+          prompt: finalPrompt,
+          topicId,
+          threadId,
+        });
+        if (result?.threadId) {
+          threads.set(threadKey, result.threadId);
+          persistThreads().catch((err) =>
+            console.warn('Failed to persist threads:', err)
+          );
+        }
+        if (result?.text) {
+          emitFinalResponse(result.text);
+        }
+        run.settled = true;
+        run.lifecycleState = 'settled';
+        clearRunTimers(run);
+        activeRuns.delete(run);
+        console.info(
+          `run_settled chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} final_emitted=${run.finalEmitted} dropped_progress_updates=${run.droppedProgressUpdates}`
+        );
+        await emitSettled('succeeded');
+        return String(result?.text || '').trim();
+      } catch (err) {
+        run.settled = true;
+        run.lifecycleState = 'failed';
+        clearRunTimers(run);
+        activeRuns.delete(run);
+        await emitSettled('failed');
+        throw err;
+      }
+    }
+
     const canStreamFinal =
       (typeof onFinalResponse === 'function' || typeof onProgressUpdate === 'function')
       && typeof execLocalStreaming === 'function'

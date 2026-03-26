@@ -1,21 +1,23 @@
-# Aipal: Telegram Codex Bot
+# Aipal: Telegram Agent Bot
 
 ![CI](https://github.com/antoniolg/aipal/actions/workflows/ci.yml/badge.svg?branch=main)
 
 ![Aipal](docs/assets/aipal.jpg)
 
-Minimal Telegram bot that forwards messages to a local CLI agent (Codex by default). Each message is executed locally and the output is sent back to the chat.
+Minimal Telegram bot that forwards messages to a local agent (Codex by default). Each message runs locally and the output is sent back to the chat.
 
 ## What it does
 - Runs your configured CLI agent for every message
+- Supports both shell-driven agents and `codex app-server` as backends
 - Queues requests per chat to avoid overlapping runs
 - Keeps agent session state per agent when JSON output is detected
 - Handles text, audio (via `mlx_whisper`), images, and documents
 - Supports `/thinking`, `/agent`, and `/cron` for runtime tweaks
+- Surfaces `codex-app` approval requests directly in Telegram with inline buttons
 
 ## Requirements
 - Node.js 24+
-- Agent CLI on PATH (default: `codex`, or `claude` / `gemini` / `opencode` when configured)
+- Agent executable on PATH (default: `codex`; also supports `codex app-server`, `claude`, `gemini`, and `opencode`)
 - Audio (optional): `mlx_whisper` (`mlx-whisper`) + `ffmpeg`
 
 ## Quick start
@@ -43,7 +45,7 @@ Open Telegram, send `/start`, then any message.
 - Documents: send a file (caption becomes the prompt)
 - `/reset`: clear the current agent session (drops the stored session id for this agent) and trigger memory curation
 - `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
-- `/agent <name>`: set the CLI agent
+- `/agent <name>`: set the agent backend
     - In root: sets global agent (persisted in `config.json`)
     - In a topic: sets an override for this topic (persisted in `agent-overrides.json`)
 - `/agent default`: clear agent override for the current topic and return to global agent
@@ -81,6 +83,11 @@ Aipal supports Telegram Topics. Sessions and agent overrides are kept per-topic.
 - Messages in the main chat ("root") have their own sessions.
 - Messages in any topic thread have their own independent sessions.
 - You can set a different agent for each topic using `/agent <name>`.
+
+### Codex App Server
+If you select `/agent codex-app`, Aipal talks to `codex app-server` over stdio instead of invoking the legacy shell flow. Thread state is still isolated per `chatId:topicId:agentId`, so `codex` and `codex-app` can coexist in the same chat without sharing sessions or memory logs.
+
+When `codex-app` requests a command or file-change approval, Aipal sends an inline approval card to Telegram. You can approve once, approve for the session, reject, or cancel without leaving the chat.
 
 ### Cron jobs
 Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).
@@ -147,7 +154,10 @@ The bot stores `/agent` in a JSON file at:
 Example:
 ```json
 {
-  "agent": "codex",
+  "agent": "codex-app",
+  "models": {
+    "codex-app": "gpt-5.4-codex"
+  },
   "cronChatId": 123456789
 }
 ```
@@ -177,15 +187,16 @@ This bot executes local commands on your machine. Run it only on trusted hardwar
 To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of Telegram user IDs. Unauthorized users are ignored (no reply).
 
 ## How it works
-- Builds a shell command with a base64-encoded prompt to avoid quoting issues
-- Executes the command locally via `bash -lc`
-- If the agent outputs Codex-style JSON, stores `thread_id` and uses `exec resume`
+- For shell-backed agents, builds a base64-encoded prompt and executes locally via `bash -lc`
+- For `codex-app`, maintains a persistent `codex app-server --session-source aipal` process and streams JSON-RPC events
+- Stores thread/session ids per agent so legacy `codex` and `codex-app` do not collide
 - Audio is downloaded, transcribed, then forwarded as text
 - Images are downloaded into the image folder and included in the prompt
 
 ## Troubleshooting
 - `ENOENT mlx_whisper`: install `mlx-whisper` and ensure `mlx_whisper` is on PATH.
-- `Error processing response.`: check that `codex` is installed and accessible on PATH.
+- `Error processing response.`: check that your selected agent is installed and accessible on PATH.
+- `Codex app-server exited`: check that the installed `codex` binary supports `app-server` and that it starts correctly with `codex app-server --session-source aipal`.
 - Telegram `ECONNRESET`: usually transient network, retry.
 
 ## License

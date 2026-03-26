@@ -258,6 +258,12 @@ test('parseSessionList extracts latest gemini session id', () => {
   assert.equal(sessionId, '22222222-2222-2222-2222-222222222222');
 });
 
+test('codex-app agent is registered as an app-server backend', () => {
+  const agent = getAgent('codex-app');
+  assert.equal(agent.id, 'codex-app');
+  assert.equal(agent.backend, 'app-server');
+});
+
 test('buildAgentCommand builds opencode command with env and json flag', () => {
   const agent = getAgent('opencode');
   const command = agent.buildCommand({ prompt: 'hello', threadId: 'sess-123' });

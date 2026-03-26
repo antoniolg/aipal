@@ -167,3 +167,80 @@ test('runAgentForChat kills a lingering process after final emission and drops l
   assert.equal(settled[0].finalEmitted, true);
   assert.equal(settled[0].droppedProgressUpdates, 1);
 });
+
+test('runAgentForChat uses the session-backed codex-app backend and persists thread ids', async () => {
+  const progressUpdates = [];
+  const finalResponses = [];
+  const calls = [];
+
+  const { runner, threads, persistedThreadSnapshots } = buildRunner({
+    execLocal: async () => {
+      throw new Error('shell path should not be used for codex-app');
+    },
+    execLocalStreaming: async () => {
+      throw new Error('streaming shell path should not be used for codex-app');
+    },
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      calls.push(options);
+      await options.onProgressUpdate(['recuperando contexto']);
+      return {
+        text: 'respuesta codex-app',
+        threadId: 'app-thread-1',
+        turnId: 'turn-1',
+      };
+    },
+  });
+
+  const response = await runner.runAgentForChat(7, 'hola desde telegram', {
+    imagePaths: ['/tmp/aipal/images/capture.png'],
+    onFinalResponse: async (text) => {
+      finalResponses.push(text);
+    },
+    onProgressUpdate: async (lines) => {
+      progressUpdates.push(lines.slice());
+    },
+  });
+
+  assert.equal(response, 'respuesta codex-app');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].agentId, 'codex-app');
+  assert.equal(calls[0].chatId, 7);
+  assert.equal(calls[0].threadId, undefined);
+  assert.match(calls[0].prompt, /hola desde telegram/);
+  assert.deepEqual(calls[0].imagePaths, ['/tmp/aipal/images/capture.png']);
+  assert.deepEqual(progressUpdates, [['recuperando contexto']]);
+  assert.deepEqual(finalResponses, ['respuesta codex-app']);
+  assert.equal(threads.get('7:root:codex-app'), 'app-thread-1');
+  assert.equal(persistedThreadSnapshots.length, 1);
+});
+
+test('runAgentOneShot uses the session-backed codex-app backend', async () => {
+  const calls = [];
+  const { runner } = buildRunner({
+    execLocal: async () => {
+      throw new Error('shell one-shot should not be used for codex-app');
+    },
+    getGlobalAgent: () => 'codex-app',
+    getGlobalModels: () => ({ 'codex-app': 'gpt-5.4-codex' }),
+    getGlobalThinking: () => 'high',
+    runSessionBackedOneShot: async (options) => {
+      calls.push(options);
+      return { text: 'respuesta efimera' };
+    },
+  });
+
+  const response = await runner.runAgentOneShot('resume este script');
+
+  assert.equal(response, 'respuesta efimera');
+  assert.deepEqual(calls, [
+    {
+      agentId: 'codex-app',
+      effort: 'high',
+      model: 'gpt-5.4-codex',
+      prompt: 'resume este script',
+    },
+  ]);
+});

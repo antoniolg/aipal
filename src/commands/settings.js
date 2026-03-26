@@ -16,6 +16,7 @@ function registerSettingsCommands(options) {
     getGlobalThinking,
     getTopicId,
     isKnownAgent,
+    listAgentModels,
     isModelResetCommand,
     normalizeAgent,
     normalizeTopicId,
@@ -87,7 +88,7 @@ function registerSettingsCommands(options) {
     }
 
     if (!isKnownAgent(value)) {
-      ctx.reply('Unknown agent. Use /agent codex|claude|gemini|opencode.');
+      ctx.reply('Unknown agent. Use /agent codex|codex-app|claude|gemini|opencode.');
       return;
     }
 
@@ -146,20 +147,28 @@ function registerSettingsCommands(options) {
       const current = getGlobalModels()[currentAgentId] || agent.defaultModel || '(default)';
       let msg = `Current model for ${agent.label}: ${current}. Use /model <model_id> to change or /model reset to clear.`;
 
-      if (typeof agent.listModelsCommand === 'function') {
+      if (
+        typeof listAgentModels === 'function'
+        || typeof agent.listModelsCommand === 'function'
+      ) {
         const stopTyping = startTyping(ctx);
         try {
-          const cmd = agent.listModelsCommand();
-          let cmdToRun = cmd;
-          if (agent.needsPty) cmdToRun = wrapCommandWithPty(cmdToRun);
+          let modelsList = '';
+          if (typeof listAgentModels === 'function') {
+            modelsList = await listAgentModels(currentAgentId);
+          } else {
+            const cmd = agent.listModelsCommand();
+            let cmdToRun = cmd;
+            if (agent.needsPty) cmdToRun = wrapCommandWithPty(cmdToRun);
 
-          const output = await execLocal('bash', ['-lc', cmdToRun], {
-            timeout: 30000,
-          });
+            const output = await execLocal('bash', ['-lc', cmdToRun], {
+              timeout: 30000,
+            });
 
-          let modelsList = output.trim();
-          if (typeof agent.parseModelList === 'function') {
-            modelsList = agent.parseModelList(modelsList);
+            modelsList = output.trim();
+            if (typeof agent.parseModelList === 'function') {
+              modelsList = agent.parseModelList(modelsList);
+            }
           }
 
           if (modelsList) {

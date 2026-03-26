@@ -1,10 +1,12 @@
 const codex = require('./codex');
+const codexApp = require('./codex-app');
 const claude = require('./claude');
 const gemini = require('./gemini');
 const opencode = require('./opencode');
 
 const agents = new Map([
   [codex.id, codex],
+  [codexApp.id, codexApp],
   [claude.id, claude],
   [gemini.id, gemini],
   [opencode.id, opencode],
@@ -35,6 +37,7 @@ function getAgentLabel(value) {
 
 module.exports = {
   AGENT_CODEX: codex.id,
+  AGENT_CODEX_APP: codexApp.id,
   AGENT_CLAUDE: claude.id,
   AGENT_OPENCODE: opencode.id,
   normalizeAgent,

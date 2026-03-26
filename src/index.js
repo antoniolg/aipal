@@ -3,6 +3,7 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const {
   AGENT_CODEX,
+  AGENT_CODEX_APP,
   getAgent,
   getAgentLabel,
   isKnownAgent,
@@ -119,6 +120,7 @@ const { createEnqueue } = require('./services/queue');
 const { createAgentRunner } = require('./services/agent-runner');
 const { createCronAlertNotifier } = require('./services/cron-alerts');
 const { createCronHandler } = require('./services/cron-handler');
+const { createCodexAppServerClient } = require('./services/codex-app-server');
 const {
   buildCronInspection,
   formatCronInspection,
@@ -132,6 +134,7 @@ const {
   listScheduledRuns: listScheduledRunsFile,
   loadScheduledRuns,
 } = require('./services/scheduled-runs');
+const { createApprovalService } = require('./services/approval-requests');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createScriptService } = require('./services/scripts');
@@ -184,6 +187,18 @@ let globalModels = {};
 let cronDefaultChatId = null;
 let oneShotScheduler = null;
 const enqueue = createEnqueue(queues);
+
+function buildCodexAppInputs(promptText, imagePaths = []) {
+  const items = [];
+  const normalizedPrompt = String(promptText || '').trim();
+  if (normalizedPrompt) {
+    items.push({ type: 'text', text: normalizedPrompt });
+  }
+  for (const imagePath of imagePaths) {
+    items.push({ type: 'localImage', path: imagePath });
+  }
+  return items;
+}
 
 const scriptManager = new ScriptManager(SCRIPTS_DIR);
 const scriptService = createScriptService({
@@ -245,6 +260,9 @@ const memoryService = createMemoryService({
 });
 const { buildBootstrapContext, captureMemoryEvent, extractMemoryText } = memoryService;
 
+const approvalService = createApprovalService({ bot });
+const codexAppServerClient = createCodexAppServerClient({ cwd: process.cwd() });
+
 const agentRunner = createAgentRunner({
   agentMaxBuffer: AGENT_MAX_BUFFER,
   agentTimeoutMs: AGENT_TIMEOUT_MS,
@@ -268,6 +286,43 @@ const agentRunner = createAgentRunner({
   prefixTextWithTimestamp,
   resolveEffectiveAgentId,
   resolveThreadId,
+  runSessionBackedChatTurn: async (options) => {
+    if (options.agentId !== AGENT_CODEX_APP) {
+      throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
+    }
+    return codexAppServerClient.runChatTurn({
+      approvalPolicy: 'on-request',
+      cwd: options.cwd,
+      effort: options.effort,
+      input: buildCodexAppInputs(options.prompt, options.imagePaths),
+      model: options.model,
+      onApprovalResolved: ({ requestId, threadId }) => {
+        approvalService.resolveServerRequest({ requestId, threadId });
+      },
+      onFinalResponse: options.onFinalResponse,
+      onProgressUpdate: options.onProgressUpdate,
+      requestApproval: (request) =>
+        approvalService.requestApproval(request, {
+          chatId: options.chatId,
+          topicId: options.topicId,
+        }),
+      sandboxPolicy: { type: 'dangerFullAccess' },
+      threadId: options.threadId,
+    });
+  },
+  runSessionBackedOneShot: async (options) => {
+    if (options.agentId !== AGENT_CODEX_APP) {
+      throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
+    }
+    return codexAppServerClient.runOneShot({
+      approvalPolicy: 'on-request',
+      cwd: process.cwd(),
+      effort: options.effort,
+      input: buildCodexAppInputs(options.prompt, []),
+      model: options.model,
+      sandboxPolicy: { type: 'dangerFullAccess' },
+    });
+  },
   shellQuote,
   terminateChildProcess,
   threadTurns,
@@ -314,9 +369,17 @@ const httpServerService = createHttpServerService({
         'No target chatId configured (need either payload.chatId, cronChatId config, or ALLOWED_USERS array)'
       );
     }
-
-    await sendResponseToChat(targetChatId, payload.text, {
-      topicId: payload.topicId,
+    const topicId = payload.topicId;
+    const topicKey = buildTopicKey(targetChatId, topicId);
+    await enqueue(topicKey, async () => {
+      const response = await runAgentForChat(targetChatId, payload.text, {
+        agentId: payload.agent ? normalizeAgent(payload.agent) : undefined,
+        topicId,
+      });
+      await sendResponseToChat(targetChatId, response, {
+        agentId: payload.agent ? normalizeAgent(payload.agent) : undefined,
+        topicId,
+      });
     });
   },
 });
@@ -424,6 +487,18 @@ registerCommands({
   loadCronJobs,
   loadCronState,
   loadScheduledRuns,
+  listAgentModels: async (agentId) => {
+    if (agentId !== AGENT_CODEX_APP) return '';
+    const models = await codexAppServerClient.listModels();
+    return models
+      .map((entry) => {
+        const efforts = Array.isArray(entry.effortOptions)
+          ? ` [${entry.effortOptions.join(', ')}]`
+          : '';
+        return `${entry.id}${efforts}`;
+      })
+      .join('\n');
+  },
   listRecentRuns,
   listScheduledRuns: listScheduledRunsFile,
   markdownToTelegramHtml,
@@ -476,6 +551,7 @@ registerHandlers({
   getDocumentPayload,
   getImagePayload,
   getTopicId,
+  handleApprovalCallback: (ctx) => approvalService.handleCallbackQuery(ctx),
   imageDir: IMAGE_DIR,
   lastScriptOutputs,
   parseSlashCommand,
@@ -530,6 +606,10 @@ bootstrapApp({
       getPersistPromises: () => [threadsPersist, agentOverridesPersist, memoryPersist],
       getQueues: () => queues,
       shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+      stopCodexAppServer: async () => {
+        approvalService.shutdown();
+        await codexAppServerClient.shutdown();
+      },
       stopHttpServer: httpServerService.stop,
     }),
 });

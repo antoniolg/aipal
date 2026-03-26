@@ -78,6 +78,7 @@ function installShutdownHooks(options) {
     getPersistPromises,
     getQueues,
     shutdownDrainTimeoutMs,
+    stopCodexAppServer,
     stopHttpServer,
   } = options;
 
@@ -109,6 +110,16 @@ function installShutdownHooks(options) {
       }
     } catch (err) {
       console.warn('Failed to stop one-shot scheduler:', err);
+    }
+
+    try {
+      if (stopCodexAppServer) {
+        Promise.resolve(stopCodexAppServer()).catch((err) =>
+          console.warn('Failed to stop codex app server:', err)
+        );
+      }
+    } catch (err) {
+      console.warn('Failed to trigger codex app server stop:', err);
     }
 
     try {
