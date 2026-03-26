@@ -1,8 +1,17 @@
 function bootstrapApp(options) {
-  const { bot, initializeApp, installShutdownHooks } = options;
+  const { bot, initializeApp, installShutdownHooks, syncBotCommands } = options;
 
   initializeApp();
-  bot.launch();
+  Promise.resolve(bot.launch())
+    .then(async () => {
+      if (typeof syncBotCommands === 'function') {
+        await syncBotCommands();
+      }
+    })
+    .catch((err) => {
+      console.error('Failed to launch bot:', err);
+      process.exit(1);
+    });
   installShutdownHooks();
 }
 

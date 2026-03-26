@@ -37,6 +37,7 @@ npm start
 ```
 
 Open Telegram, send `/start`, then any message.
+At startup, Aipal also syncs the built-in bot commands to Telegram automatically for both private chats and group chats.
 
 ## Usage (Telegram)
 - Text: send a message and get the agent response

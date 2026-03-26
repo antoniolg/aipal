@@ -139,7 +139,7 @@ const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
-const { createHttpServerService } = require('./services/http-server');
+const { syncTelegramCommands } = require('./services/telegram-command-sync');
 const { startOneShotScheduler } = require('./one-shot-scheduler');
 const { bootstrapApp } = require('./app/bootstrap');
 const { initializeApp, installShutdownHooks } = require('./app/lifecycle');
@@ -624,8 +624,8 @@ bootstrapApp({
       startOneShotScheduler,
       startDocumentCleanup,
       startImageCleanup,
-      startHttpServer: httpServerService.start,
     }),
+  syncBotCommands: () => syncTelegramCommands(bot),
   installShutdownHooks: () =>
     installShutdownHooks({
       bot,

@@ -1,3 +1,5 @@
+const { buildHelpCommandLines } = require('../telegram-commands');
+
 function registerHelpCommands(options) {
   const {
     allowedUsers,
@@ -12,20 +14,7 @@ function registerHelpCommands(options) {
   } = options;
 
   bot.command('help', async (ctx) => {
-    const builtIn = [
-      '/start - Hello world',
-      '/agent <name> - Switch agent (codex, codex-app, claude, gemini, opencode)',
-      '/thinking <level> - Set reasoning effort',
-      '/model [model_id|reset] - View/set/reset model for current agent',
-      '/stop - Interrupt the active run in this topic',
-      '/memory [status|tail|search|curate] - Memory capture + retrieval + curation',
-      '/reset - Reset current agent session',
-      '/cron [list|reload|chatid|assign|unassign|run|inspect] - Manage cron jobs',
-      '/later <ISO> | <prompt> - Schedule a one-shot future run',
-      '/runs [jobId] [n] - Show recent cron executions',
-      '/help - Show this help',
-      '/document_scripts confirm - Auto-document available scripts (requires ALLOWED_USERS)',
-    ];
+    const builtIn = buildHelpCommandLines();
 
     let scripts = [];
     try {
