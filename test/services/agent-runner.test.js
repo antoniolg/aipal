@@ -244,3 +244,94 @@ test('runAgentOneShot uses the session-backed codex-app backend', async () => {
     },
   ]);
 });
+
+test('stopActiveRun interrupts an active codex-app session-backed turn', async () => {
+  let resolveTurn;
+  const turnDone = new Promise((resolve) => {
+    resolveTurn = resolve;
+  });
+  const stopCalls = [];
+
+  const { runner } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      options.onTurnStarted({ threadId: 'thread-stop', turnId: 'turn-stop' });
+      await turnDone;
+      return { text: '', threadId: 'thread-stop', turnId: 'turn-stop' };
+    },
+    stopSessionBackedTurn: async (options) => {
+      stopCalls.push(options);
+      resolveTurn();
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(77, 'hola', {
+    agentId: 'codex-app',
+  });
+
+  let result = await runner.stopActiveRun(77, undefined, 'codex-app');
+  for (
+    let i = 0;
+    i < 10 && (result.status === 'idle' || result.status === 'not_ready');
+    i += 1
+  ) {
+    await new Promise((resolve) => setImmediate(resolve));
+    result = await runner.stopActiveRun(77, undefined, 'codex-app');
+  }
+  await runPromise;
+
+  assert.equal(result.status, 'stopping');
+  assert.deepEqual(stopCalls, [
+    {
+      agentId: 'codex-app',
+      threadId: 'thread-stop',
+      turnId: 'turn-stop',
+    },
+  ]);
+});
+
+test('stopActiveRun queues an early stop until the codex-app turn is ready', async () => {
+  let resolveTurn;
+  const turnDone = new Promise((resolve) => {
+    resolveTurn = resolve;
+  });
+  const stopCalls = [];
+
+  const { runner } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      await new Promise((resolve) => setImmediate(resolve));
+      options.onTurnStarted({ threadId: 'thread-queued', turnId: 'turn-queued' });
+      await turnDone;
+      return { text: '', threadId: 'thread-queued', turnId: 'turn-queued' };
+    },
+    stopSessionBackedTurn: async (options) => {
+      stopCalls.push(options);
+      resolveTurn();
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(88, 'hola', {
+    agentId: 'codex-app',
+  });
+
+  let result = await runner.stopActiveRun(88, undefined, 'codex-app');
+  for (let i = 0; i < 10 && result.status === 'idle'; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    result = await runner.stopActiveRun(88, undefined, 'codex-app');
+  }
+  await runPromise;
+
+  assert.equal(result.status, 'queued');
+  assert.deepEqual(stopCalls, [
+    {
+      agentId: 'codex-app',
+      threadId: 'thread-queued',
+      turnId: 'turn-queued',
+    },
+  ]);
+});

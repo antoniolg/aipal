@@ -117,6 +117,7 @@ function createCodexAppServerClient(options = {}) {
   function createTurnContext({
     onApprovalResolved,
     onFinalResponse,
+    onTurnStarted,
     onProgressUpdate,
     requestApproval,
     threadId,
@@ -173,10 +174,23 @@ function createCodexAppServerClient(options = {}) {
       lastAgentText: '',
       onApprovalResolved,
       onFinalResponse,
+      onTurnStarted,
       onProgressUpdate,
       requestApproval,
       threadId,
       turnId: null,
+      notifyTurnStarted() {
+        if (
+          typeof context.onTurnStarted === 'function'
+          && context.threadId
+          && context.turnId
+        ) {
+          context.onTurnStarted({
+            threadId: context.threadId,
+            turnId: context.turnId,
+          });
+        }
+      },
       updateProgress(itemId, text) {
         const normalized = String(text || '').trim();
         if (!progressTexts.has(itemId)) {
@@ -385,6 +399,7 @@ function createCodexAppServerClient(options = {}) {
       const turn = params.turn || {};
       if (turn.id) {
         context.turnId = String(turn.id);
+        context.notifyTurnStarted();
       }
       return;
     }
@@ -435,7 +450,11 @@ function createCodexAppServerClient(options = {}) {
         return;
       }
       if (status === 'interrupted') {
-        context.fail(createError('Codex app-server turn interrupted'));
+        context.fail(
+          createError('Codex app-server turn interrupted', {
+            code: 'ERR_RUN_INTERRUPTED',
+          })
+        );
         return;
       }
       context.resolve({
@@ -587,6 +606,7 @@ function createCodexAppServerClient(options = {}) {
       model,
       onApprovalResolved,
       onFinalResponse,
+      onTurnStarted,
       onProgressUpdate,
       requestApproval,
       sandboxPolicy = { type: 'dangerFullAccess' },
@@ -597,6 +617,7 @@ function createCodexAppServerClient(options = {}) {
     const context = createTurnContext({
       onApprovalResolved,
       onFinalResponse,
+      onTurnStarted,
       onProgressUpdate,
       requestApproval,
       threadId: resolvedThreadId,
@@ -615,6 +636,7 @@ function createCodexAppServerClient(options = {}) {
       }));
       if (result.turn?.id) {
         context.turnId = String(result.turn.id);
+        context.notifyTurnStarted();
       }
       return await context.completion;
     } catch (err) {
@@ -650,6 +672,16 @@ function createCodexAppServerClient(options = {}) {
     return Array.isArray(result.data) ? result.data : [];
   }
 
+  async function interruptTurn({ threadId, turnId }) {
+    if (!threadId || !turnId) {
+      throw createError('threadId and turnId are required to interrupt a turn');
+    }
+    return request('turn/interrupt', {
+      threadId: String(threadId),
+      turnId: String(turnId),
+    });
+  }
+
   async function shutdown() {
     const error = createError('Codex app-server client shut down');
     rejectPendingResponses(error);
@@ -671,6 +703,7 @@ function createCodexAppServerClient(options = {}) {
   }
 
   return {
+    interruptTurn,
     listModels,
     runChatTurn,
     runOneShot,

@@ -17,6 +17,7 @@ function registerHelpCommands(options) {
       '/agent <name> - Switch agent (codex, codex-app, claude, gemini, opencode)',
       '/thinking <level> - Set reasoning effort',
       '/model [model_id|reset] - View/set/reset model for current agent',
+      '/stop - Interrupt the active run in this topic',
       '/memory [status|tail|search|curate] - Memory capture + retrieval + curation',
       '/reset - Reset current agent session',
       '/cron [list|reload|chatid|assign|unassign|run|inspect] - Manage cron jobs',

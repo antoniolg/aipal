@@ -24,6 +24,7 @@ function createAgentRunner(options) {
     resolveThreadId,
     runSessionBackedChatTurn,
     runSessionBackedOneShot,
+    stopSessionBackedTurn,
     shellQuote,
     terminateChildProcess,
     threadTurns,
@@ -31,6 +32,25 @@ function createAgentRunner(options) {
     defaultTimeZone,
   } = options;
   const activeRuns = new Set();
+  const activeRunsByKey = new Map();
+
+  function buildActiveRunKey(chatId, topicId, agentId) {
+    return `${chatId}:${topicId || 'root'}:${agentId}`;
+  }
+
+  function trackActiveRun(run) {
+    activeRuns.add(run);
+    if (run.activeKey) {
+      activeRunsByKey.set(run.activeKey, run);
+    }
+  }
+
+  function untrackActiveRun(run) {
+    activeRuns.delete(run);
+    if (run?.activeKey && activeRunsByKey.get(run.activeKey) === run) {
+      activeRunsByKey.delete(run.activeKey);
+    }
+  }
 
   function scheduleRunTermination(run, signal) {
     if (!run?.child || typeof terminateChildProcess !== 'function') return;
@@ -53,12 +73,18 @@ function createAgentRunner(options) {
     for (const run of activeRuns) {
       cancelledRuns += 1;
       clearRunTimers(run);
-      scheduleRunTermination(run, 'SIGTERM');
-      run.postFinalForceKillTimer = setTimeout(() => {
-        scheduleRunTermination(run, 'SIGKILL');
-      }, 1000);
-      if (typeof run.postFinalForceKillTimer.unref === 'function') {
-        run.postFinalForceKillTimer.unref();
+      if (typeof run.stop === 'function') {
+        Promise.resolve(run.stop({ reason })).catch((err) => {
+          console.warn('Failed to stop active run:', err);
+        });
+      } else {
+        scheduleRunTermination(run, 'SIGTERM');
+        run.postFinalForceKillTimer = setTimeout(() => {
+          scheduleRunTermination(run, 'SIGKILL');
+        }, 1000);
+        if (typeof run.postFinalForceKillTimer.unref === 'function') {
+          run.postFinalForceKillTimer.unref();
+        }
       }
     }
     if (cancelledRuns > 0) {
@@ -67,6 +93,34 @@ function createAgentRunner(options) {
       );
     }
     return cancelledRuns;
+  }
+
+  async function stopActiveRun(chatId, topicId, overrideAgentId) {
+    const effectiveAgentId = resolveEffectiveAgentId(
+      chatId,
+      topicId,
+      overrideAgentId
+    );
+    const run = activeRunsByKey.get(
+      buildActiveRunKey(chatId, topicId, effectiveAgentId)
+    );
+    if (!run || run.settled) {
+      return { status: 'idle', agentId: effectiveAgentId };
+    }
+    if (typeof run.stop !== 'function') {
+      return { status: 'unsupported', agentId: effectiveAgentId };
+    }
+    if (run.stopPending) {
+      return { status: 'stopping', agentId: effectiveAgentId };
+    }
+    run.stopPending = true;
+    const result = await run.stop({ reason: 'user' });
+    if (result?.status === 'not_ready') {
+      run.stopRequested = true;
+      run.stopPending = false;
+      return { status: 'queued', agentId: effectiveAgentId };
+    }
+    return { status: 'stopping', agentId: effectiveAgentId };
   }
 
   async function runAgentOneShot(prompt) {
@@ -265,15 +319,23 @@ function createAgentRunner(options) {
       `Agent start chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} thread=${threadId || 'new'}`
     );
     const run = {
+      activeKey: buildActiveRunKey(chatId, topicId, effectiveAgentId),
       child: null,
       droppedProgressUpdates: 0,
       finalEmitted: false,
       lifecycleState: 'streaming',
       postFinalForceKillTimer: null,
       postFinalKillTimer: null,
+      session: null,
       settled: false,
+      stop:
+        agent.backend === 'app-server'
+          ? async () => ({ status: 'not_ready' })
+          : null,
+      stopPending: false,
+      stopRequested: false,
     };
-    activeRuns.add(run);
+    trackActiveRun(run);
     let output;
     let execError;
     let fatalError = null;
@@ -381,6 +443,23 @@ function createAgentRunner(options) {
       && typeof runSessionBackedChatTurn === 'function'
     ) {
       try {
+        run.stop = async () => {
+          if (
+            typeof stopSessionBackedTurn !== 'function'
+            || !run.session?.threadId
+            || !run.session?.turnId
+          ) {
+            return { status: 'not_ready' };
+          }
+          run.stopRequested = true;
+          run.lifecycleState = 'interrupting';
+          await stopSessionBackedTurn({
+            agentId: agent.id,
+            threadId: run.session.threadId,
+            turnId: run.session.turnId,
+          });
+          return { status: 'stopping' };
+        };
         const result = await runSessionBackedChatTurn({
           agentId: agent.id,
           chatId,
@@ -391,10 +470,29 @@ function createAgentRunner(options) {
           model,
           onFinalResponse: emitFinalResponse,
           onProgressUpdate: emitProgressUpdate,
+          onTurnStarted: ({ threadId: activeThreadId, turnId: activeTurnId }) => {
+            run.session = {
+              threadId: String(activeThreadId),
+              turnId: String(activeTurnId),
+            };
+            if (run.stopRequested && !run.stopPending && !run.settled) {
+              run.stopPending = true;
+              Promise.resolve(run.stop({ reason: 'user' })).catch((err) => {
+                run.stopPending = false;
+                console.warn('Failed to stop run after startup:', err);
+              });
+            }
+          },
           prompt: finalPrompt,
           topicId,
           threadId,
         });
+        if (result?.threadId && result?.turnId) {
+          run.session = {
+            threadId: String(result.threadId),
+            turnId: String(result.turnId),
+          };
+        }
         if (result?.threadId) {
           threads.set(threadKey, result.threadId);
           persistThreads().catch((err) =>
@@ -407,7 +505,7 @@ function createAgentRunner(options) {
         run.settled = true;
         run.lifecycleState = 'settled';
         clearRunTimers(run);
-        activeRuns.delete(run);
+        untrackActiveRun(run);
         console.info(
           `run_settled chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} final_emitted=${run.finalEmitted} dropped_progress_updates=${run.droppedProgressUpdates}`
         );
@@ -415,10 +513,13 @@ function createAgentRunner(options) {
         return String(result?.text || '').trim();
       } catch (err) {
         run.settled = true;
-        run.lifecycleState = 'failed';
+        run.lifecycleState =
+          err?.code === 'ERR_RUN_INTERRUPTED' ? 'interrupted' : 'failed';
         clearRunTimers(run);
-        activeRuns.delete(run);
-        await emitSettled('failed');
+        untrackActiveRun(run);
+        await emitSettled(
+          err?.code === 'ERR_RUN_INTERRUPTED' ? 'interrupted' : 'failed'
+        );
         throw err;
       }
     }
@@ -481,7 +582,7 @@ function createAgentRunner(options) {
       run.settled = true;
       run.lifecycleState = 'failed';
       clearRunTimers(run);
-      activeRuns.delete(run);
+      untrackActiveRun(run);
       await emitSettled('failed');
       throw fatalError;
     }
@@ -496,7 +597,7 @@ function createAgentRunner(options) {
       run.settled = true;
       run.lifecycleState = 'failed';
       clearRunTimers(run);
-      activeRuns.delete(run);
+      untrackActiveRun(run);
       await emitSettled('failed');
       throw execError;
     }
@@ -542,7 +643,7 @@ function createAgentRunner(options) {
     run.settled = true;
     run.lifecycleState = 'settled';
     clearRunTimers(run);
-    activeRuns.delete(run);
+    untrackActiveRun(run);
     console.info(
       `run_settled chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} final_emitted=${run.finalEmitted} dropped_progress_updates=${run.droppedProgressUpdates}${finalSignalLogged ? ' post_final_exit=true' : ''}`
     );
@@ -554,6 +655,7 @@ function createAgentRunner(options) {
     cancelActiveRuns,
     runAgentForChat,
     runAgentOneShot,
+    stopActiveRun,
   };
 }
 

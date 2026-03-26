@@ -483,3 +483,31 @@ test('codex app server client respawns after the server exits', async () => {
 
   await client.shutdown();
 });
+
+test('codex app server client exposes interruptTurn', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'turn/interrupt') {
+      state.send({ id: message.id, result: {} });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.interruptTurn({ threadId: 'thread-1', turnId: 'turn-1' });
+
+  assert.equal(harness.spawns[0].messages[2].method, 'turn/interrupt');
+  assert.deepEqual(harness.spawns[0].messages[2].params, {
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+  });
+
+  await client.shutdown();
+});

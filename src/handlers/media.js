@@ -104,6 +104,10 @@ function registerMediaHandlers(options) {
           await finishUi();
         }
       } catch (err) {
+        if (err?.code === 'ERR_RUN_INTERRUPTED') {
+          await finishUi();
+          return;
+        }
         console.error(err);
         if (err && err.code === 'ENOENT') {
           await replyWithError(
@@ -199,6 +203,10 @@ function registerMediaHandlers(options) {
           await finishUi();
         }
       } catch (err) {
+        if (err?.code === 'ERR_RUN_INTERRUPTED') {
+          await finishUi();
+          return;
+        }
         console.error(err);
         await replyWithError(ctx, 'Error processing image.', err);
         await finishUi();
@@ -285,6 +293,10 @@ function registerMediaHandlers(options) {
           await finishUi();
         }
       } catch (err) {
+        if (err?.code === 'ERR_RUN_INTERRUPTED') {
+          await finishUi();
+          return;
+        }
         console.error(err);
         await replyWithError(ctx, 'Error processing document.', err);
         await finishUi();

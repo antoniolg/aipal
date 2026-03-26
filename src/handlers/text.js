@@ -37,6 +37,7 @@ function registerTextHandler(options) {
           'thinking',
           'agent',
           'model',
+          'stop',
           'memory',
           'reset',
           'cron',
@@ -139,6 +140,10 @@ function registerTextHandler(options) {
           await replyWithResponse(ctx, output);
           await finishUi();
         } catch (err) {
+          if (err?.code === 'ERR_RUN_INTERRUPTED') {
+            await finishUi();
+            return;
+          }
           console.error(err);
           await replyWithError(ctx, `Error running /${slash.name}.`, err);
           await finishUi();
@@ -211,6 +216,10 @@ function registerTextHandler(options) {
           await finishUi();
         }
       } catch (err) {
+        if (err?.code === 'ERR_RUN_INTERRUPTED') {
+          await finishUi();
+          return;
+        }
         console.error(err);
         await replyWithError(ctx, 'Error processing response.', err);
         await finishUi();

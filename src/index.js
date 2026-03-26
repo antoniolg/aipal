@@ -301,6 +301,7 @@ const agentRunner = createAgentRunner({
       },
       onFinalResponse: options.onFinalResponse,
       onProgressUpdate: options.onProgressUpdate,
+      onTurnStarted: options.onTurnStarted,
       requestApproval: (request) =>
         approvalService.requestApproval(request, {
           chatId: options.chatId,
@@ -323,13 +324,22 @@ const agentRunner = createAgentRunner({
       sandboxPolicy: { type: 'dangerFullAccess' },
     });
   },
+  stopSessionBackedTurn: async (options) => {
+    if (options.agentId !== AGENT_CODEX_APP) {
+      throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
+    }
+    return codexAppServerClient.interruptTurn({
+      threadId: options.threadId,
+      turnId: options.turnId,
+    });
+  },
   shellQuote,
   terminateChildProcess,
   threadTurns,
   wrapCommandWithPty,
   defaultTimeZone: DEFAULT_TIME_ZONE,
 });
-const { cancelActiveRuns, runAgentForChat, runAgentOneShot } = agentRunner;
+const { cancelActiveRuns, runAgentForChat, runAgentOneShot, stopActiveRun } = agentRunner;
 
 const telegramReplyService = createTelegramReplyService({
   bot,
@@ -529,6 +539,7 @@ registerCommands({
     memoryEventsSinceCurate = value;
   },
   startTyping,
+  stopActiveRun,
   threadTurns,
   updateConfig,
   wrapCommandWithPty,
