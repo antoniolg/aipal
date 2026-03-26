@@ -139,8 +139,10 @@ function registerSettingsCommands(options) {
   });
 
   bot.command('model', async (ctx) => {
+    const topicId = getTopicId(ctx);
     const value = extractCommandValue(ctx.message.text);
-    const currentAgentId = getGlobalAgent();
+    const currentAgentId =
+      getAgentOverride(ctx.chat.id, topicId) || getGlobalAgent();
     const agent = getAgent(currentAgentId);
 
     if (!value) {
