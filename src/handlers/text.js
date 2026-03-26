@@ -104,8 +104,8 @@ function registerTextHandler(options) {
               onFinalResponse: async (partialResponse) => {
                 if (responseSent) return;
                 responseSent = true;
-                await finishUi();
                 await replyWithResponse(ctx, partialResponse);
+                await finishUi();
               },
               onSettled: async () => {
                 await finishUi();
@@ -121,8 +121,8 @@ function registerTextHandler(options) {
               text: extractMemoryText(response),
             });
             if (!responseSent) {
-              await finishUi();
               await replyWithResponse(ctx, response);
+              await finishUi();
             }
             return;
           }
@@ -136,12 +136,12 @@ function registerTextHandler(options) {
             kind: 'text',
             text: extractMemoryText(output),
           });
-          await finishUi();
           await replyWithResponse(ctx, output);
+          await finishUi();
         } catch (err) {
           console.error(err);
-          await finishUi();
           await replyWithError(ctx, `Error running /${slash.name}.`, err);
+          await finishUi();
         } finally {
           await finishUi();
         }
@@ -190,8 +190,8 @@ function registerTextHandler(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+            await finishUi();
           },
           onSettled: async () => {
             await finishUi();
@@ -207,13 +207,13 @@ function registerTextHandler(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
-          await finishUi();
           await replyWithResponse(ctx, response);
+          await finishUi();
         }
       } catch (err) {
         console.error(err);
-        await finishUi();
         await replyWithError(ctx, 'Error processing response.', err);
+        await finishUi();
       } finally {
         await finishUi();
       }

@@ -122,12 +122,49 @@ function createCodexAppServerClient(options = {}) {
     threadId,
   }) {
     const deferred = createDeferred();
-    const commentaryOrder = [];
-    const commentaryTexts = new Map();
+    const progressOrder = [];
+    const progressTexts = new Map();
     const finalTexts = new Map();
     const itemPhases = new Map();
     const deltaTexts = new Map();
     const itemsById = new Map();
+
+    function summarizeNonMessageItem(item, source) {
+      if (!item || typeof item !== 'object') return '';
+      const type = String(item.type || '').trim();
+      if (!type || type === 'agentMessage') return '';
+
+      if (type === 'reasoning') {
+        return '';
+      }
+
+      if (type === 'commandExecution') {
+        return '';
+      }
+
+      if (type === 'fileChange') {
+        if (source === 'completed') return '';
+        const changeCount = Array.isArray(item.changes) ? item.changes.length : null;
+        const suffix = changeCount ? ` (${changeCount})` : '';
+        return `Preparando cambios de archivos${suffix}...`;
+      }
+
+      const toolName = String(
+        item.tool
+        || item.name
+        || item.serverToolName
+        || item.mcpToolName
+        || item.callName
+        || ''
+      ).trim();
+      if (type.toLowerCase().includes('tool') || toolName) {
+        if (source === 'completed') return '';
+        const label = toolName || type;
+        return `Usando herramienta: ${label}`;
+      }
+
+      return '';
+    }
 
     const context = {
       completed: false,
@@ -140,17 +177,21 @@ function createCodexAppServerClient(options = {}) {
       requestApproval,
       threadId,
       turnId: null,
-      updateCommentary(itemId, text) {
-        if (!commentaryTexts.has(itemId)) {
-          commentaryOrder.push(itemId);
+      updateProgress(itemId, text) {
+        const normalized = String(text || '').trim();
+        if (!progressTexts.has(itemId)) {
+          progressOrder.push(itemId);
         }
-        commentaryTexts.set(itemId, text);
+        progressTexts.set(itemId, normalized);
         if (typeof context.onProgressUpdate !== 'function') return;
-        const lines = commentaryOrder
-          .map((id) => commentaryTexts.get(id))
+        const combined = progressOrder
+          .map((id) => progressTexts.get(id))
           .map((value) => String(value || '').trim())
-          .filter(Boolean);
-        context.onProgressUpdate(lines);
+          .filter(Boolean)
+          .join('\n\n')
+          .trim();
+        if (!combined) return;
+        context.onProgressUpdate({ mode: 'raw', text: combined });
       },
       updateFinal(itemId, text) {
         finalTexts.set(itemId, text);
@@ -170,8 +211,10 @@ function createCodexAppServerClient(options = {}) {
         if (text) {
           context.lastAgentText = text;
         }
+        if (phase !== 'final_answer' && text) {
+          context.updateProgress(itemId, text);
+        }
         if (phase === 'commentary') {
-          context.updateCommentary(itemId, text);
           return;
         }
         if (phase === 'final_answer') {
@@ -192,6 +235,13 @@ function createCodexAppServerClient(options = {}) {
         }
         if (item?.type === 'agentMessage') {
           context.handleAgentMessage(item, source);
+          return;
+        }
+        if (itemId) {
+          const summary = summarizeNonMessageItem(item, source);
+          if (summary || source === 'completed') {
+            context.updateProgress(itemId, summary);
+          }
         }
       },
       handleAgentDelta({ delta, itemId }) {
@@ -200,10 +250,10 @@ function createCodexAppServerClient(options = {}) {
         deltaTexts.set(itemId, nextText);
         context.lastAgentText = nextText || context.lastAgentText;
         const phase = itemPhases.get(itemId);
-        if (phase === 'commentary') {
-          context.updateCommentary(itemId, nextText);
-        } else if (phase === 'final_answer') {
+        if (phase === 'final_answer') {
           context.updateFinal(itemId, nextText);
+        } else {
+          context.updateProgress(itemId, nextText);
         }
       },
       emitFinal(text) {

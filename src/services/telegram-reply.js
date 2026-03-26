@@ -18,6 +18,7 @@ function createTelegramReplyService(options) {
     imageDir,
     isPathInside,
     markdownToTelegramHtml,
+    progressUpdateMinIntervalMs = 1000,
     resolveEffectiveAgentId,
   } = options;
 
@@ -31,6 +32,18 @@ function createTelegramReplyService(options) {
   function renderTelegramHtml(text) {
     const formatted = markdownToTelegramHtml(text);
     return formatted || escapeHtmlText(text);
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getRetryAfterMs(err) {
+    const retryAfterSeconds = Number(err?.response?.parameters?.retry_after);
+    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+      return 0;
+    }
+    return retryAfterSeconds * 1000;
   }
 
   function getReplyThreadExtra(ctx) {
@@ -67,11 +80,30 @@ function createTelegramReplyService(options) {
     return ['Thinking...', '', ...recent.map((line) => `• ${line}`)].join('\n');
   }
 
+  function formatProgressPayload(progress) {
+    if (progress && typeof progress === 'object' && !Array.isArray(progress)) {
+      if (progress.mode === 'raw') {
+        return String(progress.text || '').trim();
+      }
+    }
+    return formatProgressText(progress);
+  }
+
+  function truncateProgressText(text, maxLength = 3500) {
+    const normalized = String(text || '').trim();
+    if (!normalized || normalized.length <= maxLength) return normalized;
+    const suffix = normalized.slice(-(maxLength - 5)).trimStart();
+    return `...\n\n${suffix}`;
+  }
+
   function createProgressReporter(transport) {
     let progressMessageId = null;
     let lastText = '';
     let closed = false;
     let queue = Promise.resolve();
+    let lastSentAt = 0;
+    let pending = null;
+    let timer = null;
 
     async function flush(action) {
       queue = queue
@@ -83,32 +115,95 @@ function createTelegramReplyService(options) {
       return queue;
     }
 
+    async function withRetry(action, options = {}) {
+      const { allowWhenClosed = false } = options;
+      try {
+        return await action();
+      } catch (err) {
+        const retryAfterMs = getRetryAfterMs(err);
+        if (!retryAfterMs || (closed && !allowWhenClosed)) {
+          throw err;
+        }
+        await sleep(retryAfterMs);
+        return action();
+      }
+    }
+
+    async function applyProgress(payload) {
+      if (transport.mode === 'draft') {
+        await withRetry(() => transport.send(payload));
+        return;
+      }
+      if (!progressMessageId) {
+        const message = await withRetry(() => transport.send(payload));
+        progressMessageId = message?.message_id || null;
+      } else {
+        await withRetry(() => transport.edit(progressMessageId, payload));
+      }
+    }
+
+    function scheduleFlush() {
+      if (closed || !pending || timer) return queue;
+      const minIntervalMs = Math.max(0, Number(transport.minIntervalMs) || 0);
+      const elapsedMs = Date.now() - lastSentAt;
+      const delayMs =
+        lastSentAt > 0 ? Math.max(0, minIntervalMs - elapsedMs) : 0;
+      if (delayMs === 0) {
+        const payload = pending;
+        pending = null;
+        return flush(async () => {
+          if (closed || !payload) return;
+          await applyProgress(payload);
+          lastSentAt = Date.now();
+          if (pending) {
+            scheduleFlush();
+          }
+        });
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        const payload = pending;
+        pending = null;
+        void flush(async () => {
+          if (closed || !payload) return;
+          await applyProgress(payload);
+          lastSentAt = Date.now();
+          if (pending) {
+            scheduleFlush();
+          }
+        });
+      }, delayMs);
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+
     return {
-      async update(lines) {
+      async update(progress) {
         if (closed) return;
-        const text = formatProgressText(lines);
+        const text = truncateProgressText(formatProgressPayload(progress));
         if (!text || text === lastText) return;
         const html = renderTelegramHtml(text);
-
-        await flush(async () => {
-          if (closed) return;
-          if (!progressMessageId) {
-            const message = await transport.send({ html, text });
-            progressMessageId = message?.message_id || null;
-          } else {
-            await transport.edit(progressMessageId, { html, text });
-          }
-          lastText = text;
-        });
+        pending = { html, text };
+        lastText = text;
+        await scheduleFlush();
       },
       async finish() {
         closed = true;
-        if (!progressMessageId) return;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        pending = null;
+        if (!progressMessageId || typeof transport.remove !== 'function') {
+          await queue.catch(() => {});
+          return;
+        }
         const messageId = progressMessageId;
         progressMessageId = null;
         lastText = '';
         await flush(async () => {
-          await transport.remove(messageId);
+          await withRetry(() => transport.remove(messageId), {
+            allowWhenClosed: true,
+          });
         });
       },
     };
@@ -116,8 +211,25 @@ function createTelegramReplyService(options) {
 
   function createReplyProgressReporter(ctx) {
     const chatId = ctx?.chat?.id;
+    const isPrivateChat = chatId > 0;
     const threadExtra = getReplyThreadExtra(ctx);
+    if (isPrivateChat) {
+      const draftId = Math.max(1, Date.now() % 2147483647);
+      return createProgressReporter({
+        minIntervalMs: progressUpdateMinIntervalMs,
+        mode: 'draft',
+        send: async (payload) =>
+          bot.telegram.callApi('sendMessageDraft', {
+            chat_id: chatId,
+            draft_id: draftId,
+            text: payload.text,
+            parse_mode: 'HTML',
+            ...threadExtra,
+          }),
+      });
+    }
     return createProgressReporter({
+      minIntervalMs: progressUpdateMinIntervalMs,
       send: async (payload) =>
         ctx.reply(payload.html, {
           parse_mode: 'HTML',
@@ -136,7 +248,23 @@ function createTelegramReplyService(options) {
 
   function createChatProgressReporter(chatId, topicId) {
     const threadExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
+    if (chatId > 0) {
+      const draftId = Math.max(1, Date.now() % 2147483647);
+      return createProgressReporter({
+        minIntervalMs: progressUpdateMinIntervalMs,
+        mode: 'draft',
+        send: async (payload) =>
+          bot.telegram.callApi('sendMessageDraft', {
+            chat_id: chatId,
+            draft_id: draftId,
+            text: payload.text,
+            parse_mode: 'HTML',
+            ...threadExtra,
+          }),
+      });
+    }
     return createProgressReporter({
+      minIntervalMs: progressUpdateMinIntervalMs,
       send: async (payload) =>
         bot.telegram.sendMessage(chatId, payload.html, {
           parse_mode: 'HTML',

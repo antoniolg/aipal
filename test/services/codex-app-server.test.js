@@ -63,7 +63,7 @@ function createSpawnHarness(onMessage) {
   };
 }
 
-test('codex app server client initializes, streams commentary, and returns final text', async () => {
+test('codex app server client initializes, streams raw progress, and returns final text', async () => {
   const progressUpdates = [];
   const finalResponses = [];
   const logger = { warn() {} };
@@ -135,8 +135,8 @@ test('codex app server client initializes, streams commentary, and returns final
     onFinalResponse: (text) => {
       finalResponses.push(text);
     },
-    onProgressUpdate: (lines) => {
-      progressUpdates.push(lines.slice());
+    onProgressUpdate: (payload) => {
+      progressUpdates.push(payload);
     },
   });
 
@@ -156,10 +156,7 @@ test('codex app server client initializes, streams commentary, and returns final
     harness.spawns[0].messages[3].params.sandboxPolicy,
     { type: 'dangerFullAccess' }
   );
-  assert.deepEqual(
-    progressUpdates.filter((lines) => lines.length > 0),
-    [['revisando archivos']]
-  );
+  assert.deepEqual(progressUpdates, [{ mode: 'raw', text: 'revisando archivos' }]);
   assert.deepEqual(finalResponses, ['respuesta final']);
   assert.equal(result.text, 'respuesta final');
   assert.equal(result.threadId, 'thread-1');
@@ -271,6 +268,182 @@ test('codex app server client routes approval requests and resolution events', a
   assert.equal(approvals[0].item.id, 'cmd-1');
   assert.equal(approvalResponse.result.decision, 'acceptForSession');
   assert.deepEqual(resolvedRequests, [{ requestId: 91, threadId: 'thread-approve' }]);
+
+  await client.shutdown();
+});
+
+test('codex app server client ignores reasoning and command progress noise', async () => {
+  const progressUpdates = [];
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-progress' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-progress' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/started',
+          params: { threadId: 'thread-progress', turn: { id: 'turn-progress' } },
+        });
+        state.send({
+          method: 'item/started',
+          params: {
+            threadId: 'thread-progress',
+            turnId: 'turn-progress',
+            item: { id: 'reason-1', type: 'reasoning' },
+          },
+        });
+        state.send({
+          method: 'item/started',
+          params: {
+            threadId: 'thread-progress',
+            turnId: 'turn-progress',
+            item: {
+              id: 'cmd-1',
+              type: 'commandExecution',
+              command: "/bin/zsh -lc 'git diff --stat'",
+            },
+          },
+        });
+        state.send({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-progress',
+            turnId: 'turn-progress',
+            item: {
+              id: 'msg-final',
+              type: 'agentMessage',
+              phase: 'final_answer',
+              text: 'hecho',
+            },
+          },
+        });
+        state.send({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-progress',
+            turn: { id: 'turn-progress', status: 'completed' },
+          },
+        });
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const result = await client.runChatTurn({
+    cwd: '/tmp/demo',
+    input: [{ type: 'text', text: 'hola' }],
+    onProgressUpdate: (payload) => {
+      progressUpdates.push(payload);
+    },
+  });
+
+  assert.equal(result.text, 'hecho');
+  assert.deepEqual(progressUpdates, []);
+
+  await client.shutdown();
+});
+
+test('codex app server client clears stale tool progress when the item completes', async () => {
+  const progressUpdates = [];
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-tool' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-tool' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/started',
+          params: { threadId: 'thread-tool', turn: { id: 'turn-tool' } },
+        });
+        state.send({
+          method: 'item/started',
+          params: {
+            threadId: 'thread-tool',
+            turnId: 'turn-tool',
+            item: { id: 'tool-1', type: 'mcpToolCall', name: 'grep' },
+          },
+        });
+        state.send({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-tool',
+            turnId: 'turn-tool',
+            item: { id: 'tool-1', type: 'mcpToolCall', name: 'grep' },
+          },
+        });
+        state.send({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-tool',
+            turnId: 'turn-tool',
+            item: {
+              id: 'msg-1',
+              type: 'agentMessage',
+              phase: 'commentary',
+              text: 'Leyendo el repo...',
+            },
+          },
+        });
+        state.send({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-tool',
+            turnId: 'turn-tool',
+            item: {
+              id: 'msg-final',
+              type: 'agentMessage',
+              phase: 'final_answer',
+              text: 'hecho',
+            },
+          },
+        });
+        state.send({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-tool',
+            turn: { id: 'turn-tool', status: 'completed' },
+          },
+        });
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const result = await client.runChatTurn({
+    cwd: '/tmp/demo',
+    input: [{ type: 'text', text: 'hola' }],
+    onProgressUpdate: (payload) => {
+      progressUpdates.push(payload);
+    },
+  });
+
+  assert.equal(result.text, 'hecho');
+  assert.deepEqual(progressUpdates, [
+    { mode: 'raw', text: 'Usando herramienta: grep' },
+    { mode: 'raw', text: 'Leyendo el repo...' },
+  ]);
 
   await client.shutdown();
 });

@@ -216,3 +216,66 @@ test('e2e: text handler runs bootstrap + agent + telegram reply with thread cont
   const persistedThreadId = threads.get(buildThreadKey(12345, undefined, 'fake'));
   assert.equal(persistedThreadId, 'thread-1');
 });
+
+test('text handler sends final response before finishing progress UI', async () => {
+  const bot = {
+    handlers: new Map(),
+    on(event, handler) {
+      this.handlers.set(event, handler);
+    },
+  };
+
+  const queues = new Map();
+  const enqueue = createEnqueue(queues);
+  const events = [];
+
+  registerTextHandler({
+    bot,
+    buildMemoryThreadKey: buildThreadKey,
+    buildTopicKey,
+    captureMemoryEvent: async () => {},
+    consumeScriptContext: () => '',
+    createReplyProgressReporter: () => ({
+      update: async () => {},
+      finish: async () => {
+        events.push('finish');
+      },
+    }),
+    enqueue,
+    extractMemoryText: (value) => String(value || ''),
+    formatScriptContext: () => '',
+    getTopicId: () => undefined,
+    lastScriptOutputs: new Map(),
+    parseSlashCommand,
+    replyWithError: async () => {},
+    replyWithResponse: async () => {
+      events.push('reply');
+    },
+    resolveEffectiveAgentId: () => 'fake',
+    runAgentForChat: async (_chatId, _text, hooks) => {
+      await hooks.onFinalResponse('Respuesta final');
+      await hooks.onSettled();
+      return 'Respuesta final';
+    },
+    runScriptCommand: async () => '',
+    scriptManager: { getScriptMetadata: async () => ({}) },
+    startTyping: () => () => {},
+  });
+
+  const textHandler = bot.handlers.get('text');
+  assert.ok(textHandler);
+
+  const ctx = {
+    chat: { id: 12345 },
+    message: { text: 'Hola equipo' },
+    reply: async () => {},
+    sendChatAction: async () => {},
+  };
+
+  textHandler(ctx);
+  const queued = queues.get(buildTopicKey(ctx.chat.id, undefined));
+  assert.ok(queued);
+  await queued;
+
+  assert.deepEqual(events, ['reply', 'finish']);
+});

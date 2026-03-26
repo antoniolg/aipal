@@ -83,8 +83,8 @@ function registerMediaHandlers(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+            await finishUi();
           },
           onSettled: async () => {
             await finishUi();
@@ -100,8 +100,8 @@ function registerMediaHandlers(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
-          await finishUi();
           await replyWithResponse(ctx, response);
+          await finishUi();
         }
       } catch (err) {
         console.error(err);
@@ -114,6 +114,7 @@ function registerMediaHandlers(options) {
         } else {
           await replyWithError(ctx, 'Error processing audio.', err);
         }
+        await finishUi();
       } finally {
         await finishUi();
         await safeUnlink(audioPath);
@@ -177,8 +178,8 @@ function registerMediaHandlers(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+            await finishUi();
           },
           onSettled: async () => {
             await finishUi();
@@ -194,13 +195,13 @@ function registerMediaHandlers(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
-          await finishUi();
           await replyWithResponse(ctx, response);
+          await finishUi();
         }
       } catch (err) {
         console.error(err);
-        await finishUi();
         await replyWithError(ctx, 'Error processing image.', err);
+        await finishUi();
       } finally {
         await finishUi();
       }
@@ -263,8 +264,8 @@ function registerMediaHandlers(options) {
           onFinalResponse: async (partialResponse) => {
             if (responseSent) return;
             responseSent = true;
-            await finishUi();
             await replyWithResponse(ctx, partialResponse);
+            await finishUi();
           },
           onSettled: async () => {
             await finishUi();
@@ -280,13 +281,13 @@ function registerMediaHandlers(options) {
           text: extractMemoryText(response),
         });
         if (!responseSent) {
-          await finishUi();
           await replyWithResponse(ctx, response);
+          await finishUi();
         }
       } catch (err) {
         console.error(err);
-        await finishUi();
         await replyWithError(ctx, 'Error processing document.', err);
+        await finishUi();
       } finally {
         await finishUi();
       }

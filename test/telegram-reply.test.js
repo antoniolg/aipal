@@ -202,7 +202,7 @@ test('createReplyProgressReporter reuses a single Telegram message', async () =>
   const edited = [];
   const deleted = [];
   const ctx = {
-    chat: { id: 123 },
+    chat: { id: -123 },
     message: { message_thread_id: 77, is_topic_message: true },
     reply: async (text, options) => {
       sent.push({ text, options });
@@ -238,6 +238,7 @@ test('createReplyProgressReporter reuses a single Telegram message', async () =>
       String(value)
         .replace('**mirando**', '<b>mirando</b>')
         .replace('`cambio`', '<code>cambio</code>'),
+    progressUpdateMinIntervalMs: 0,
     resolveEffectiveAgentId: () => 'codex',
   });
 
@@ -253,7 +254,163 @@ test('createReplyProgressReporter reuses a single Telegram message', async () =>
   assert.equal(edited[0].messageId, 555);
   assert.equal(edited[0].options.message_thread_id, 77);
   assert.equal(edited[0].options.parse_mode, 'HTML');
-  assert.deepEqual(deleted, [{ chatId: 123, messageId: 555 }]);
+  assert.deepEqual(deleted, [{ chatId: -123, messageId: 555 }]);
+});
+
+test('createReplyProgressReporter renders raw codex-app progress without Thinking wrapper', async () => {
+  const sent = [];
+  const edited = [];
+  const deleted = [];
+  const ctx = {
+    chat: { id: -123 },
+    message: { message_thread_id: 77, is_topic_message: true },
+    reply: async (text, options) => {
+      sent.push({ text, options });
+      return { message_id: 556 };
+    },
+    telegram: {
+      editMessageText: async (chatId, messageId, _inline, text, options) => {
+        edited.push({ chatId, messageId, text, options });
+      },
+      deleteMessage: async (chatId, messageId) => {
+        deleted.push({ chatId, messageId });
+      },
+    },
+  };
+
+  const service = createTelegramReplyService({
+    bot: { telegram: {} },
+    chunkMarkdown: () => [],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    documentDir: '/tmp/docs',
+    extractDocumentTokens: () => ({ cleanedText: '', documentPaths: [] }),
+    extractImageTokens: () => ({ cleanedText: '', imagePaths: [] }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: '',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: () => true,
+    markdownToTelegramHtml: (value) => value,
+    progressUpdateMinIntervalMs: 0,
+    resolveEffectiveAgentId: () => 'codex-app',
+  });
+
+  const reporter = service.createReplyProgressReporter(ctx);
+  await reporter.update({ mode: 'raw', text: 'Leyendo archivos...' });
+  await reporter.update({ mode: 'raw', text: 'Leyendo archivos...\n\nAbriendo config.json' });
+  await reporter.finish();
+
+  assert.equal(sent.length, 1);
+  assert.equal(edited.length, 1);
+  assert.equal(sent[0].text, 'Leyendo archivos...');
+  assert.equal(edited[0].text, 'Leyendo archivos...\n\nAbriendo config.json');
+  assert.doesNotMatch(sent[0].text, /Thinking\.\.\./);
+  assert.deepEqual(deleted, [{ chatId: -123, messageId: 556 }]);
+});
+
+test('createReplyProgressReporter uses sendMessageDraft in private chats', async () => {
+  const apiCalls = [];
+  const ctx = {
+    chat: { id: 123 },
+    message: {},
+    reply: async () => {
+      throw new Error('reply should not be used for private streaming drafts');
+    },
+    telegram: {
+      deleteMessage: async () => {},
+      editMessageText: async () => {},
+    },
+  };
+
+  const service = createTelegramReplyService({
+    bot: {
+      telegram: {
+        callApi: async (method, payload) => {
+          apiCalls.push({ method, payload });
+          return true;
+        },
+      },
+    },
+    chunkMarkdown: () => [],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    documentDir: '/tmp/docs',
+    extractDocumentTokens: () => ({ cleanedText: '', documentPaths: [] }),
+    extractImageTokens: () => ({ cleanedText: '', imagePaths: [] }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: '',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: () => true,
+    markdownToTelegramHtml: (value) => value,
+    progressUpdateMinIntervalMs: 0,
+    resolveEffectiveAgentId: () => 'codex-app',
+  });
+
+  const reporter = service.createReplyProgressReporter(ctx);
+  await reporter.update({ mode: 'raw', text: 'Leyendo repo...' });
+  await reporter.finish();
+
+  assert.equal(apiCalls.length, 1);
+  assert.equal(apiCalls[0].method, 'sendMessageDraft');
+  assert.equal(apiCalls[0].payload.chat_id, 123);
+  assert.equal(apiCalls[0].payload.text, 'Leyendo repo...');
+  assert.equal(apiCalls[0].payload.parse_mode, 'HTML');
+  assert.equal(apiCalls[0].payload.draft_id > 0, true);
+});
+
+test('createReplyProgressReporter retries delete on finish after retry_after', async () => {
+  let deleteAttempts = 0;
+  const ctx = {
+    chat: { id: -123 },
+    message: { message_thread_id: 77, is_topic_message: true },
+    reply: async () => ({ message_id: 557 }),
+    telegram: {
+      editMessageText: async () => {},
+      deleteMessage: async () => {
+        deleteAttempts += 1;
+        if (deleteAttempts === 1) {
+          const err = new Error('Too Many Requests');
+          err.response = { parameters: { retry_after: 0.001 } };
+          throw err;
+        }
+      },
+    },
+  };
+
+  const service = createTelegramReplyService({
+    bot: { telegram: {} },
+    chunkMarkdown: () => [],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    documentDir: '/tmp/docs',
+    extractDocumentTokens: () => ({ cleanedText: '', documentPaths: [] }),
+    extractImageTokens: () => ({ cleanedText: '', imagePaths: [] }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: '',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: () => true,
+    markdownToTelegramHtml: (value) => value,
+    progressUpdateMinIntervalMs: 0,
+    resolveEffectiveAgentId: () => 'codex-app',
+  });
+
+  const reporter = service.createReplyProgressReporter(ctx);
+  await reporter.update({ mode: 'raw', text: 'Leyendo repo...' });
+  await reporter.finish();
+
+  assert.equal(deleteAttempts, 2);
 });
 
 test('replyWithResponse omits message_thread_id for general topic replies', async () => {

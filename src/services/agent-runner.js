@@ -350,18 +350,28 @@ function createAgentRunner(options) {
       }
     };
 
-    const emitProgressLines = (lines) => {
-      if (typeof onProgressUpdate !== 'function' || !Array.isArray(lines)) return;
+    const emitProgressUpdate = (payload) => {
+      if (typeof onProgressUpdate !== 'function') return;
+      const fingerprint = Array.isArray(payload)
+        ? payload.join('\n')
+        : payload && typeof payload === 'object'
+          ? JSON.stringify(payload)
+          : String(payload || '');
+      const hasContent = Array.isArray(payload)
+        ? payload.length > 0
+        : Boolean(
+          (payload && typeof payload === 'object' && String(payload.text || '').trim())
+          || String(payload || '').trim()
+        );
       if (run.finalEmitted) {
-        if (lines.length > 0) {
+        if (hasContent) {
           run.droppedProgressUpdates += 1;
         }
         return;
       }
-      const fingerprint = lines.join('\n');
       if (!fingerprint || fingerprint === lastProgressFingerprint) return;
       lastProgressFingerprint = fingerprint;
-      Promise.resolve(onProgressUpdate(lines)).catch((err) => {
+      Promise.resolve(onProgressUpdate(payload)).catch((err) => {
         console.warn('Failed to stream agent progress update:', err);
       });
     };
@@ -380,7 +390,7 @@ function createAgentRunner(options) {
           imagePaths: imagePaths || [],
           model,
           onFinalResponse: emitFinalResponse,
-          onProgressUpdate: emitProgressLines,
+          onProgressUpdate: emitProgressUpdate,
           prompt: finalPrompt,
           topicId,
           threadId,
@@ -438,7 +448,7 @@ function createAgentRunner(options) {
             ) {
               const fingerprint = partial.commentaryMessages.join('\n');
               if (fingerprint) {
-                emitProgressLines(partial.commentaryMessages);
+                emitProgressUpdate(partial.commentaryMessages);
               }
             }
             if (partial.sawFinal && partial.text) {
