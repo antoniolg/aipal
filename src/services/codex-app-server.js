@@ -75,6 +75,11 @@ function extractThreadsFromValue(value) {
   for (const record of items) {
     const threadRecord = asRecord(record.thread);
     const sessionRecord = asRecord(record.session);
+    const sourceValue = record.source ?? threadRecord?.source ?? sessionRecord?.source;
+    const sourceRecord =
+      asRecord(record.source)
+      || asRecord(threadRecord?.source)
+      || asRecord(sessionRecord?.source);
     const threadId =
       pickString(record, ['threadId', 'thread_id', 'id', 'conversationId', 'conversation_id'])
       || pickString(threadRecord, ['id', 'threadId', 'thread_id']);
@@ -93,6 +98,15 @@ function extractThreadsFromValue(value) {
         pickNumber(record, ['updatedAt', 'updated_at', 'lastActivityAt', 'createdAt'])
         || pickNumber(sessionRecord, ['updatedAt', 'updated_at', 'lastActivityAt', 'createdAt'])
       ),
+      sourceCustom: pickString(sourceRecord, ['custom']) || undefined,
+      sourceKind:
+        (typeof sourceValue === 'string' ? sourceValue.trim() : undefined)
+        || pickString(sourceRecord, ['kind', 'type'])
+        || (pickString(sourceRecord, ['custom']) ? 'custom' : undefined),
+      sourceLabel:
+        (typeof sourceValue === 'string' ? sourceValue.trim() : undefined)
+        || pickString(sourceRecord, ['kind', 'type'])
+        || (pickString(sourceRecord, ['custom']) ? `custom:${pickString(sourceRecord, ['custom'])}` : undefined),
     });
   }
   return [...summaries.values()].sort(
@@ -806,7 +820,7 @@ function createCodexAppServerClient(options = {}) {
   async function listThreads({ query, cwd: workspaceDir } = {}) {
     const result = await request('thread/list', omitUndefined({
       cwd: workspaceDir,
-      limit: 12,
+      limit: 100,
       query: query ? String(query).trim() : undefined,
     }));
     return extractThreadsFromValue(result);
@@ -833,6 +847,20 @@ function createCodexAppServerClient(options = {}) {
       name: normalizedName,
       threadId: normalizedThreadId,
     });
+  }
+
+  async function forkThread({ threadId }) {
+    const normalizedThreadId = String(threadId || '').trim();
+    if (!normalizedThreadId) {
+      throw createError('threadId is required to fork a thread');
+    }
+    const result = await request('thread/fork', {
+      threadId: normalizedThreadId,
+    });
+    return (
+      pickString(asRecord(result.thread), ['id', 'threadId', 'thread_id'])
+      || pickString(asRecord(result), ['threadId', 'thread_id', 'id'])
+    );
   }
 
   async function interruptTurn({ threadId, turnId }) {
@@ -882,6 +910,7 @@ function createCodexAppServerClient(options = {}) {
   }
 
   return {
+    forkThread,
     interruptTurn,
     listModels,
     listThreads,

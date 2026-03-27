@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { getAgent } = require('../../src/agents');
-const { registerResumeCommand } = require('../../src/commands/resume');
+const { parseResumeArgs, registerResumeCommand } = require('../../src/commands/resume');
 
 function buildOptions(overrides = {}) {
   return {
@@ -23,14 +23,34 @@ function buildOptions(overrides = {}) {
   };
 }
 
+test('parseResumeArgs extracts query and --all flag', () => {
+  assert.deepEqual(parseResumeArgs('/resume'), {
+    includeAipal: false,
+    query: '',
+  });
+  assert.deepEqual(parseResumeArgs('/resume revisar diff'), {
+    includeAipal: false,
+    query: 'revisar diff',
+  });
+  assert.deepEqual(parseResumeArgs('/resume --all revisar diff'), {
+    includeAipal: true,
+    query: 'revisar diff',
+  });
+  assert.deepEqual(parseResumeArgs('/resume revisar diff --all'), {
+    includeAipal: true,
+    query: 'revisar diff',
+  });
+});
+
 test('/resume lists codex-app threads with picker buttons', async () => {
   const handlers = new Map();
   const pickerCalls = [];
 
   registerResumeCommand(buildOptions({
     handlers,
-    listResumeThreads: async ({ agentId, query }) => {
+    listResumeThreads: async ({ agentId, includeAipal, query }) => {
       assert.equal(agentId, 'codex-app');
+      assert.equal(includeAipal, false);
       assert.equal(query, 'demo');
       return [{ threadId: 'thread-1', title: 'Sesion demo', cwd: '/tmp/demo' }];
     },
@@ -52,6 +72,25 @@ test('/resume lists codex-app threads with picker buttons', async () => {
   assert.equal(pickerCalls[0].currentBinding, 'thread-old');
   assert.equal(pickerCalls[0].effectiveAgentLabel, 'codex-app');
   assert.equal(pickerCalls[0].query, 'demo');
+});
+
+test('/resume forwards --all when requested', async () => {
+  const handlers = new Map();
+
+  registerResumeCommand(buildOptions({
+    handlers,
+    listResumeThreads: async ({ includeAipal, query }) => {
+      assert.equal(includeAipal, true);
+      assert.equal(query, 'demo');
+      return [{ threadId: 'thread-1', title: 'Sesion demo', cwd: '/tmp/demo' }];
+    },
+  }));
+
+  const handler = handlers.get('resume');
+  await handler({
+    chat: { id: 1 },
+    message: { text: '/resume demo --all', message_thread_id: 77 },
+  });
 });
 
 test('/resume explains when there are no threads', async () => {

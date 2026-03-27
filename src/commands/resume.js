@@ -1,5 +1,29 @@
 const { AGENT_CODEX_APP } = require('../agents');
 
+function parseResumeArgs(text) {
+  const raw = String(text || '').replace(/^\/resume(?:@[^\s]+)?/i, '').trim();
+  if (!raw) {
+    return { includeAipal: false, query: '' };
+  }
+
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const queryParts = [];
+  let includeAipal = false;
+
+  for (const part of parts) {
+    if (part === '--all') {
+      includeAipal = true;
+      continue;
+    }
+    queryParts.push(part);
+  }
+
+  return {
+    includeAipal,
+    query: queryParts.join(' ').trim(),
+  };
+}
+
 function registerResumeCommand(options) {
   const {
     bot,
@@ -15,14 +39,13 @@ function registerResumeCommand(options) {
 
   bot.command('resume', async (ctx) => {
     const topicId = getTopicId(ctx);
-    const query = String(
-      ctx.message.text.replace(/^\/resume(?:@[^\s]+)?/i, '')
-    ).trim();
+    const { includeAipal, query } = parseResumeArgs(ctx.message.text);
     const effectiveAgentId = resolveEffectiveAgentId(ctx.chat.id, topicId);
 
     try {
       const threads = await listResumeThreads({
         agentId: AGENT_CODEX_APP,
+        includeAipal,
         query,
       });
       if (!Array.isArray(threads) || threads.length === 0) {
@@ -72,5 +95,6 @@ function registerResumeCommand(options) {
 }
 
 module.exports = {
+  parseResumeArgs,
   registerResumeCommand,
 };

@@ -4,6 +4,8 @@ const {
 } = require('./telegram-topics');
 
 const CALLBACK_PREFIX = 'resume_thread';
+const PAGE_CALLBACK_PREFIX = 'resume_page';
+const PAGE_SIZE = 10;
 
 function escapeHtml(value) {
   return String(value || '')
@@ -30,7 +32,12 @@ function formatThreadButton(thread) {
   const title = String(thread?.title || '').trim() || 'Sesion sin titulo';
   const cwd = truncateMiddle(thread?.cwd || '', 28);
   const threadId = shortThreadId(thread?.threadId || '');
-  const parts = [title];
+  const sourceKind = String(thread?.sourceKind || '').trim().toLowerCase();
+  const sourcePrefix =
+    sourceKind && sourceKind !== 'custom'
+      ? `[${sourceKind.toUpperCase()}] `
+      : '';
+  const parts = [`${sourcePrefix}${title}`];
   if (cwd) parts.push(cwd);
   if (threadId) parts.push(`#${threadId}`);
   return parts.join(' · ');
@@ -39,6 +46,7 @@ function formatThreadButton(thread) {
 function formatThreadListMessage({
   currentBinding,
   effectiveAgentLabel,
+  page,
   query,
   threads,
 }) {
@@ -56,7 +64,13 @@ function formatThreadListMessage({
   if (currentBinding) {
     lines.push('', `Binding actual de codex-app: <code>${escapeHtml(currentBinding)}</code>`);
   }
-  lines.push('', `Elige una sesion (${threads.length}):`);
+  const total = threads.length;
+  const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const end = Math.min(total, (page + 1) * PAGE_SIZE);
+  lines.push('', `Elige una sesion (${total}):`);
+  if (total > PAGE_SIZE) {
+    lines.push(`Mostrando ${start}-${end}.`);
+  }
   return lines.join('\n');
 }
 
@@ -67,19 +81,83 @@ function createResumeThreadsService(options) {
     onSelectThread,
   } = options;
   const pendingSelections = new Map();
+  const pendingPickers = new Map();
 
   function buildCallbackData(token) {
     return `${CALLBACK_PREFIX}:${token}`;
   }
 
-  function buildKeyboard(threads, tokenByThreadId) {
+  function buildPageCallbackData(pickerId, page) {
+    return `${PAGE_CALLBACK_PREFIX}:${pickerId}:${page}`;
+  }
+
+  function buildKeyboard(threads, tokenByThreadId, pickerId, page) {
+    const pageThreads = threads.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+    const inlineKeyboard = pageThreads.map((thread) => [
+      {
+        text: formatThreadButton(thread),
+        callback_data: buildCallbackData(tokenByThreadId.get(thread.threadId)),
+      },
+    ]);
+    const totalPages = Math.ceil(threads.length / PAGE_SIZE);
+    if (totalPages > 1) {
+      const navRow = [];
+      if (page > 0) {
+        navRow.push({
+          text: 'Anterior',
+          callback_data: buildPageCallbackData(pickerId, page - 1),
+        });
+      }
+      if (page < totalPages - 1) {
+        navRow.push({
+          text: 'Siguiente',
+          callback_data: buildPageCallbackData(pickerId, page + 1),
+        });
+      }
+      if (navRow.length > 0) {
+        inlineKeyboard.push(navRow);
+      }
+    }
     return {
-      inline_keyboard: threads.map((thread) => [
-        {
-          text: formatThreadButton(thread),
-          callback_data: buildCallbackData(tokenByThreadId.get(thread.threadId)),
+      inline_keyboard: inlineKeyboard,
+    };
+  }
+
+  function registerSelectionTokens(ctx, threads, pickerId) {
+    const tokenByThreadId = new Map();
+    for (const thread of threads) {
+      const token = randomUUID().replace(/-/g, '').slice(0, 12);
+      tokenByThreadId.set(thread.threadId, token);
+      pendingSelections.set(token, {
+        chatId: ctx.chat.id,
+        pickerId,
+        thread: {
+          cwd: thread.cwd,
+          threadId: thread.threadId,
+          title: thread.title,
         },
-      ]),
+        topicId: ctx.message?.message_thread_id,
+      });
+    }
+    return tokenByThreadId;
+  }
+
+  function buildPickerPayload(entry, tokenByThreadId, page) {
+    return {
+      disable_web_page_preview: true,
+      parse_mode: 'HTML',
+      reply_markup: buildKeyboard(entry.threads, tokenByThreadId, entry.pickerId, page),
+      ...buildTelegramThreadExtra({
+        forceTopic: true,
+        topicId: entry.topicId,
+      }),
+      text: formatThreadListMessage({
+        currentBinding: entry.currentBinding,
+        effectiveAgentLabel: entry.effectiveAgentLabel,
+        page,
+        query: entry.query,
+        threads: entry.threads,
+      }),
     };
   }
 
@@ -90,42 +168,65 @@ function createResumeThreadsService(options) {
       query,
       threads,
     } = params;
-    const tokenByThreadId = new Map();
-    for (const thread of threads) {
-      const token = randomUUID().replace(/-/g, '').slice(0, 12);
-      tokenByThreadId.set(thread.threadId, token);
-      pendingSelections.set(token, {
-        chatId: ctx.chat.id,
-        thread: {
-          cwd: thread.cwd,
-          threadId: thread.threadId,
-          title: thread.title,
-        },
-        topicId: ctx.message?.message_thread_id,
-      });
-    }
+    const pickerId = randomUUID().replace(/-/g, '').slice(0, 12);
+    const entry = {
+      chatId: ctx.chat.id,
+      currentBinding,
+      effectiveAgentLabel,
+      pickerId,
+      query,
+      threads,
+      topicId: ctx.message?.message_thread_id,
+    };
+    pendingPickers.set(pickerId, entry);
+    const tokenByThreadId = registerSelectionTokens(ctx, threads, pickerId);
+    const payload = buildPickerPayload(entry, tokenByThreadId, 0);
     return bot.telegram.sendMessage(
       ctx.chat.id,
-      formatThreadListMessage({
-        currentBinding,
-        effectiveAgentLabel,
-        query,
-        threads,
-      }),
-      {
-        disable_web_page_preview: true,
-        parse_mode: 'HTML',
-        reply_markup: buildKeyboard(threads, tokenByThreadId),
-        ...buildTelegramThreadExtra({
-          forceTopic: true,
-          topicId: ctx.message?.message_thread_id,
-        }),
-      }
+      payload.text,
+      payload
     );
   }
 
   async function handleCallbackQuery(ctx) {
     const data = String(ctx.callbackQuery?.data || '');
+    const pageMatch = data.match(/^resume_page:([^:]+):(\d+)$/);
+    if (pageMatch) {
+      const [, pickerId, pageText] = pageMatch;
+      const entry = pendingPickers.get(pickerId);
+      if (!entry) {
+        await ctx.answerCbQuery('Este listado ya no esta activo.', {
+          show_alert: false,
+        });
+        return true;
+      }
+
+      const page = Number.parseInt(pageText, 10);
+      if (!Number.isInteger(page) || page < 0) {
+        await ctx.answerCbQuery('Pagina no valida.', {
+          show_alert: false,
+        });
+        return true;
+      }
+
+      const tokenByThreadId = registerSelectionTokens(
+        {
+          chat: { id: entry.chatId },
+          message: { message_thread_id: entry.topicId },
+        },
+        entry.threads,
+        pickerId
+      );
+      const payload = buildPickerPayload(entry, tokenByThreadId, page);
+      await ctx.editMessageText(payload.text, {
+        disable_web_page_preview: payload.disable_web_page_preview,
+        parse_mode: payload.parse_mode,
+        reply_markup: payload.reply_markup,
+      });
+      await ctx.answerCbQuery();
+      return true;
+    }
+
     const match = data.match(/^resume_thread:([^:]+)$/);
     if (!match) return false;
 
@@ -154,6 +255,7 @@ function createResumeThreadsService(options) {
 
   function shutdown() {
     pendingSelections.clear();
+    pendingPickers.clear();
   }
 
   return {
@@ -165,6 +267,7 @@ function createResumeThreadsService(options) {
 
 module.exports = {
   CALLBACK_PREFIX,
+  PAGE_CALLBACK_PREFIX,
   createResumeThreadsService,
   formatThreadButton,
 };

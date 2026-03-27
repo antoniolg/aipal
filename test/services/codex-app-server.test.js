@@ -182,12 +182,14 @@ test('codex app server client lists threads and reads thread state', async () =>
               title: 'Sesion dos',
               cwd: '/tmp/b',
               updatedAt: 200,
+              source: 'cli',
             },
             {
               id: 'thread-1',
               title: 'Sesion uno',
               cwd: '/tmp/a',
               updatedAt: 100,
+              source: { custom: 'aipal' },
             },
           ],
         },
@@ -220,6 +222,9 @@ test('codex app server client lists threads and reads thread state', async () =>
   assert.equal(threads[0].threadId, 'thread-2');
   assert.equal(threads[0].title, 'Sesion dos');
   assert.equal(threads[0].cwd, '/tmp/b');
+  assert.equal(threads[0].sourceKind, 'cli');
+  assert.equal(threads[0].sourceLabel, 'cli');
+  assert.equal(threads[1].sourceCustom, 'aipal');
 
   const threadState = await client.readThreadState({ threadId: 'thread-2' });
   assert.equal(threadState.threadId, 'thread-2');
@@ -259,6 +264,34 @@ test('codex app server client sets thread names', async () => {
     name: 'Revisar diff de aipal',
     threadId: 'thread-rename',
   });
+
+  await client.shutdown();
+});
+
+test('codex app server client exposes forkThread', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/fork') {
+      state.send({
+        id: message.id,
+        result: {
+          thread: { id: 'thread-forked' },
+        },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const forkedThreadId = await client.forkThread({ threadId: 'thread-original' });
+  assert.equal(forkedThreadId, 'thread-forked');
 
   await client.shutdown();
 });

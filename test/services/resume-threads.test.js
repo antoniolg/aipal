@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  PAGE_CALLBACK_PREFIX,
   createResumeThreadsService,
   formatThreadButton,
 } = require('../../src/services/resume-threads');
@@ -22,13 +23,15 @@ function createBotRecorder() {
   };
 }
 
-test('formatThreadButton renders title, cwd and short id', () => {
+test('formatThreadButton renders source, title, cwd and short id', () => {
   const text = formatThreadButton({
     cwd: '/Users/antonio/Projects/antoniolg/aipal',
+    sourceKind: 'cli',
     threadId: 'thread-1234567890abcdef',
     title: 'Sesion buena',
   });
 
+  assert.match(text, /\[CLI\]/);
   assert.match(text, /Sesion buena/);
   assert.match(text, /aipal/);
   assert.match(text, /#567890abcdef/);
@@ -99,6 +102,69 @@ test('resume threads service sends picker and handles selections', async () => {
   });
   assert.equal(staleHandled, true);
   assert.equal(answers[1], 'Esta seleccion ya no esta activa.');
+
+  service.shutdown();
+});
+
+test('resume threads service paginates long thread lists', async () => {
+  const { bot, sentMessages } = createBotRecorder();
+  const edits = [];
+  const answers = [];
+  const service = createResumeThreadsService({
+    bot,
+    onSelectThread: async () => {},
+  });
+
+  await service.sendThreadPicker(
+    {
+      chat: { id: 555 },
+      message: { message_thread_id: 99 },
+    },
+    {
+      currentBinding: 'thread-old',
+      effectiveAgentLabel: 'codex-app',
+      query: '',
+      threads: Array.from({ length: 12 }, (_, index) => ({
+        cwd: `/tmp/project-${index + 1}`,
+        sourceKind: index === 0 ? 'cli' : undefined,
+        threadId: `thread-${index + 1}`,
+        title: `Sesion ${index + 1}`,
+      })),
+    }
+  );
+
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0].text, /Mostrando 1-10/);
+  assert.equal(sentMessages[0].options.reply_markup.inline_keyboard.length, 11);
+  assert.equal(
+    sentMessages[0].options.reply_markup.inline_keyboard.at(-1)[0].text,
+    'Siguiente'
+  );
+
+  const nextCallback =
+    sentMessages[0].options.reply_markup.inline_keyboard.at(-1)[0].callback_data;
+  assert.match(nextCallback, new RegExp(`^${PAGE_CALLBACK_PREFIX}:`));
+
+  const handled = await service.handleCallbackQuery({
+    answerCbQuery: async (text = '') => {
+      answers.push(text);
+    },
+    callbackQuery: { data: nextCallback },
+    editMessageText: async (text, options) => {
+      edits.push({ options, text });
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(edits.length, 1);
+  assert.match(edits[0].text, /Mostrando 11-12/);
+  assert.equal(edits[0].options.reply_markup.inline_keyboard.length, 3);
+  assert.equal(
+    edits[0].options.reply_markup.inline_keyboard.at(-1)[0].text,
+    'Anterior'
+  );
+  assert.equal(answers.length, 1);
+  assert.equal(answers[0], '');
 
   service.shutdown();
 });
