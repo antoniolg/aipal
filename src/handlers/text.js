@@ -38,6 +38,8 @@ function registerTextHandler(options) {
           'thinking',
           'agent',
           'model',
+          'resume',
+          'status',
           'stop',
           'memory',
           'reset',

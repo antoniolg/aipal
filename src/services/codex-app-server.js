@@ -9,6 +9,130 @@ const CLIENT_INFO = {
   version: '0.2.0',
 };
 
+function asRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value;
+}
+
+function pickString(record, keys) {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+}
+
+function pickNumber(record, keys) {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function normalizeEpochTimestamp(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function extractThreadRecords(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => extractThreadRecords(entry));
+  }
+  const record = asRecord(value);
+  if (!record) return [];
+  const directId = pickString(record, ['id', 'threadId', 'thread_id', 'conversationId']);
+  if (directId && !Array.isArray(record.items) && !Array.isArray(record.threads)) {
+    return [record];
+  }
+  const out = [];
+  for (const key of ['threads', 'items', 'data', 'results']) {
+    const nested = record[key];
+    if (Array.isArray(nested)) {
+      out.push(...nested.flatMap((entry) => extractThreadRecords(entry)));
+    }
+  }
+  return out;
+}
+
+function extractThreadsFromValue(value) {
+  const items = extractThreadRecords(value);
+  const summaries = new Map();
+  for (const record of items) {
+    const threadRecord = asRecord(record.thread);
+    const sessionRecord = asRecord(record.session);
+    const threadId =
+      pickString(record, ['threadId', 'thread_id', 'id', 'conversationId', 'conversation_id'])
+      || pickString(threadRecord, ['id', 'threadId', 'thread_id']);
+    if (!threadId) continue;
+    summaries.set(threadId, {
+      threadId,
+      title:
+        pickString(record, ['title', 'name', 'headline'])
+        || pickString(sessionRecord, ['title', 'name'])
+        || undefined,
+      cwd:
+        pickString(record, ['cwd', 'projectKey', 'project_key'])
+        || pickString(sessionRecord, ['cwd', 'projectKey', 'project_key'])
+        || undefined,
+      updatedAt: normalizeEpochTimestamp(
+        pickNumber(record, ['updatedAt', 'updated_at', 'lastActivityAt', 'createdAt'])
+        || pickNumber(sessionRecord, ['updatedAt', 'updated_at', 'lastActivityAt', 'createdAt'])
+      ),
+    });
+  }
+  return [...summaries.values()].sort(
+    (left, right) => (right.updatedAt || 0) - (left.updatedAt || 0)
+  );
+}
+
+function extractThreadState(value, fallbackThreadId) {
+  const record = asRecord(value) || {};
+  const threadRecord = asRecord(record.thread);
+  const sessionRecord = asRecord(record.session);
+  const threadId =
+    pickString(record, ['threadId', 'thread_id', 'id'])
+    || pickString(threadRecord, ['id', 'threadId', 'thread_id'])
+    || fallbackThreadId;
+  return {
+    threadId: threadId ? String(threadId) : undefined,
+    title:
+      pickString(record, ['title', 'name', 'headline'])
+      || pickString(threadRecord, ['title', 'name'])
+      || pickString(sessionRecord, ['title', 'name'])
+      || undefined,
+    cwd:
+      pickString(record, ['cwd', 'projectKey', 'project_key'])
+      || pickString(threadRecord, ['cwd', 'projectKey', 'project_key'])
+      || pickString(sessionRecord, ['cwd', 'projectKey', 'project_key'])
+      || undefined,
+    model:
+      pickString(record, ['model'])
+      || pickString(threadRecord, ['model'])
+      || pickString(sessionRecord, ['model'])
+      || undefined,
+    reasoningEffort:
+      pickString(record, ['reasoningEffort', 'reasoning_effort', 'effort'])
+      || pickString(threadRecord, ['reasoningEffort', 'reasoning_effort', 'effort'])
+      || pickString(sessionRecord, ['reasoningEffort', 'reasoning_effort', 'effort'])
+      || undefined,
+  };
+}
+
 function createCodexAppServerClient(options = {}) {
   const {
     clientInfo = CLIENT_INFO,
@@ -679,6 +803,38 @@ function createCodexAppServerClient(options = {}) {
     return Array.isArray(result.data) ? result.data : [];
   }
 
+  async function listThreads({ query, cwd: workspaceDir } = {}) {
+    const result = await request('thread/list', omitUndefined({
+      cwd: workspaceDir,
+      limit: 12,
+      query: query ? String(query).trim() : undefined,
+    }));
+    return extractThreadsFromValue(result);
+  }
+
+  async function readThreadState({ threadId }) {
+    if (!threadId) {
+      throw createError('threadId is required to read a thread state');
+    }
+    const result = await request('thread/resume', {
+      persistExtendedHistory: false,
+      threadId: String(threadId),
+    });
+    return extractThreadState(result, String(threadId));
+  }
+
+  async function setThreadName({ name, threadId }) {
+    const normalizedThreadId = String(threadId || '').trim();
+    const normalizedName = String(name || '').trim();
+    if (!normalizedThreadId || !normalizedName) {
+      throw createError('threadId and name are required to set a thread name');
+    }
+    await request('thread/name/set', {
+      name: normalizedName,
+      threadId: normalizedThreadId,
+    });
+  }
+
   async function interruptTurn({ threadId, turnId }) {
     if (!threadId || !turnId) {
       throw createError('threadId and turnId are required to interrupt a turn');
@@ -728,8 +884,11 @@ function createCodexAppServerClient(options = {}) {
   return {
     interruptTurn,
     listModels,
+    listThreads,
+    readThreadState,
     runChatTurn,
     runOneShot,
+    setThreadName,
     shutdown,
     steerTurn,
   };

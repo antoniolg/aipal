@@ -52,6 +52,8 @@ At startup, Aipal also syncs the built-in bot commands to Telegram automatically
 - `/agent default`: clear agent override for the current topic and return to global agent
 - `/reset`: clear the current agent session for this topic (drops the stored session id for this agent)
 - `/model [model_id|reset]`: view/set/reset the model for the current agent (persisted in `config.json`)
+- `/resume [query]`: list/search previous `codex-app` sessions and bind one to this topic
+- `/status`: show the effective topic agent plus the current `codex-app` binding/model/reasoning/run state
 - `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
 - `/cron [list|reload|chatid|assign|unassign|run <jobId>|inspect <jobId>]`: manage cron jobs (see below)
 - `/later <ISO-8601 datetime> | <prompt>`: schedule a one-shot future run
@@ -89,6 +91,8 @@ Aipal supports Telegram Topics. Sessions and agent overrides are kept per-topic.
 If you select `/agent codex-app`, Aipal talks to `codex app-server` over stdio instead of invoking the legacy shell flow. Thread state is still isolated per `chatId:topicId:agentId`, so `codex` and `codex-app` can coexist in the same chat without sharing sessions or memory logs.
 
 When `codex-app` requests a command or file-change approval, Aipal sends an inline approval card to Telegram. You can approve once, approve for the session, reject, or cancel without leaving the chat.
+
+You can also reuse previous `codex-app` sessions with `/resume`, which stores the selected `threadId` for the current topic. `/status` shows the current `codex-app` binding and a compact snapshot of the topic state.
 
 ### Cron jobs
 Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).

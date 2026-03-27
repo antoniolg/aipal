@@ -135,6 +135,7 @@ const {
 const { createApprovalService } = require('./services/approval-requests');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
+const { createResumeThreadsService } = require('./services/resume-threads');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
 const { syncTelegramCommands } = require('./services/telegram-command-sync');
@@ -323,6 +324,15 @@ const agentRunner = createAgentRunner({
       sandboxPolicy: { type: 'dangerFullAccess' },
     });
   },
+  setSessionBackedThreadTitle: async (options) => {
+    if (options.agentId !== AGENT_CODEX_APP) {
+      throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
+    }
+    return codexAppServerClient.setThreadName({
+      name: options.title,
+      threadId: options.threadId,
+    });
+  },
   steerSessionBackedTurn: async (options) => {
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
@@ -350,11 +360,94 @@ const agentRunner = createAgentRunner({
 });
 const {
   cancelActiveRuns,
+  getActiveRunState,
   runAgentForChat,
   runAgentOneShot,
   steerActiveRun,
   stopActiveRun,
 } = agentRunner;
+
+function getCodexAppThreadId(chatId, topicId) {
+  return resolveThreadId(threads, chatId, topicId, AGENT_CODEX_APP).threadId;
+}
+
+function setThreadBinding(chatId, topicId, agentId, threadId) {
+  const threadKey = buildThreadKey(chatId, normalizeTopicId(topicId), agentId);
+  threads.set(threadKey, String(threadId));
+  return persistThreads();
+}
+
+function formatThreadStatusMessage({
+  activeRunState,
+  effectiveAgentId,
+  threadBinding,
+  threadState,
+}) {
+  const lines = [
+    `<b>Agente activo:</b> ${escapeHtml(getAgentLabel(effectiveAgentId))}`,
+    `<b>Modelo de codex-app:</b> ${escapeHtml(globalModels[AGENT_CODEX_APP] || '(default)')}`,
+    `<b>Reasoning:</b> ${escapeHtml(globalThinking || '(default)')}`,
+    threadBinding
+      ? `<b>Thread de codex-app:</b> <code>${escapeHtml(threadBinding)}</code>`
+      : '<b>Thread de codex-app:</b> (sin binding)',
+  ];
+
+  if (threadState?.title) {
+    lines.push(`<b>Titulo:</b> ${escapeHtml(threadState.title)}`);
+  }
+  if (threadState?.cwd) {
+    lines.push(`<b>Proyecto:</b> <code>${escapeHtml(threadState.cwd)}</code>`);
+  }
+  if (threadState?.model) {
+    lines.push(`<b>Modelo del thread:</b> ${escapeHtml(threadState.model)}`);
+  }
+  if (threadState?.reasoningEffort) {
+    lines.push(`<b>Reasoning del thread:</b> ${escapeHtml(threadState.reasoningEffort)}`);
+  }
+
+  lines.push(
+    activeRunState?.active
+      ? `<b>Run activo:</b> si (${escapeHtml(activeRunState.lifecycleState || 'streaming')})`
+      : '<b>Run activo:</b> no'
+  );
+
+  return lines.join('\n');
+}
+
+const resumeThreadsService = createResumeThreadsService({
+  bot,
+  onSelectThread: async (entry, ctx) => {
+    await setThreadBinding(
+      entry.chatId,
+      entry.topicId,
+      AGENT_CODEX_APP,
+      entry.thread.threadId
+    );
+    const titleSuffix = entry.thread.title
+      ? ` (${escapeHtml(entry.thread.title)})`
+      : '';
+    await ctx.editMessageText(
+      `Sesion de codex-app reanudada: <code>${escapeHtml(entry.thread.threadId)}</code>${titleSuffix}`,
+      {
+        disable_web_page_preview: true,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [] },
+      }
+    );
+    const effectiveAgentId = resolveEffectiveAgentId(entry.chatId, entry.topicId);
+    if (effectiveAgentId !== AGENT_CODEX_APP) {
+      await ctx.reply(
+        `El binding se ha guardado para <b>codex-app</b>. El agente activo en este topic sigue siendo <b>${escapeHtml(getAgentLabel(
+          effectiveAgentId
+        ))}</b>.`,
+        {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }
+      );
+    }
+  },
+});
 
 const telegramReplyService = createTelegramReplyService({
   bot,
@@ -430,6 +523,13 @@ function buildMemoryThreadKey(chatId, topicId, agentId) {
   return buildThreadKey(chatId, normalizeTopicId(topicId), agentId);
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 let cronScheduler = null;
 
 async function hydrateGlobalSettings() {
@@ -471,6 +571,8 @@ registerCommands({
   getCronDefaultChatId: () => cronDefaultChatId,
   getCronScheduler: () => cronScheduler,
   getOneShotScheduler: () => oneShotScheduler,
+  getActiveRunState,
+  getCodexAppThreadId,
   getGlobalAgent: () => globalAgent,
   getGlobalModels: () => globalModels,
   getGlobalThinking: () => globalThinking,
@@ -495,6 +597,10 @@ registerCommands({
       })
       .join('\n');
   },
+  listResumeThreads: async ({ agentId, query }) => {
+    if (agentId !== AGENT_CODEX_APP) return [];
+    return codexAppServerClient.listThreads({ query });
+  },
   listRecentRuns,
   listScheduledRuns: listScheduledRunsFile,
   markdownToTelegramHtml,
@@ -505,11 +611,37 @@ registerCommands({
   persistMemory,
   persistThreads,
   replyWithError,
+  readResumeThreadState: async ({ chatId, effectiveAgentId, topicId }) => {
+    const threadBinding = getCodexAppThreadId(chatId, topicId);
+    const activeRunState = getActiveRunState(
+      chatId,
+      topicId,
+      AGENT_CODEX_APP
+    );
+    let threadState = null;
+    if (threadBinding) {
+      try {
+        threadState = await codexAppServerClient.readThreadState({
+          threadId: threadBinding,
+        });
+      } catch (err) {
+        console.warn('Failed to read codex-app thread state:', err?.message || err);
+      }
+    }
+    return formatThreadStatusMessage({
+      activeRunState,
+      effectiveAgentId,
+      threadBinding,
+      threadState,
+    });
+  },
   resolveEffectiveAgentId,
   createScheduledRun,
   saveCronJobs,
   scriptManager,
   searchMemory,
+  sendResumeThreadPicker: (ctx, params) =>
+    resumeThreadsService.sendThreadPicker(ctx, params),
   setAgentOverride: (chatId, topicId, agentId) =>
     setAgentOverride(agentOverrides, chatId, topicId, agentId),
   setGlobalAgent: (value) => {
@@ -548,7 +680,11 @@ registerHandlers({
   getDocumentPayload,
   getImagePayload,
   getTopicId,
-  handleApprovalCallback: (ctx) => approvalService.handleCallbackQuery(ctx),
+  handleCallbackQuery: async (ctx) => {
+    const approvalHandled = await approvalService.handleCallbackQuery(ctx);
+    if (approvalHandled) return true;
+    return resumeThreadsService.handleCallbackQuery(ctx);
+  },
   imageDir: IMAGE_DIR,
   lastScriptOutputs,
   parseSlashCommand,
@@ -606,6 +742,7 @@ bootstrapApp({
       shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
       stopCodexAppServer: async () => {
         approvalService.shutdown();
+        resumeThreadsService.shutdown();
         await codexAppServerClient.shutdown();
       },
     }),

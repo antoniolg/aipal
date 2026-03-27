@@ -217,6 +217,95 @@ test('runAgentForChat uses the session-backed codex-app backend and persists thr
   assert.equal(persistedThreadSnapshots.length, 1);
 });
 
+test('runAgentForChat reuses a resumed codex-app thread binding', async () => {
+  const calls = [];
+  const { runner, threads } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    resolveThreadId: (_threads, chatId, topicId, agentId) => ({
+      threadKey: `${chatId}:${topicId || 'root'}:${agentId}`,
+      threadId: threads.get(`${chatId}:${topicId || 'root'}:${agentId}`),
+      migrated: false,
+    }),
+    runSessionBackedChatTurn: async (options) => {
+      calls.push(options);
+      return {
+        text: 'respuesta reanudada',
+        threadId: options.threadId,
+        turnId: 'turn-resumed',
+      };
+    },
+  });
+
+  threads.set('17:root:codex-app', 'thread-resumed');
+  const response = await runner.runAgentForChat(17, 'sigue por aqui', {
+    agentId: 'codex-app',
+  });
+
+  assert.equal(response, 'respuesta reanudada');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].threadId, 'thread-resumed');
+});
+
+test('runAgentForChat assigns a title when a new codex-app thread is created', async () => {
+  const titleCalls = [];
+  const { runner } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async () => ({
+      text: 'respuesta titulada',
+      threadId: 'thread-title',
+      turnId: 'turn-title',
+    }),
+    setSessionBackedThreadTitle: async (options) => {
+      titleCalls.push(options);
+    },
+  });
+
+  await runner.runAgentForChat(
+    18,
+    'revisa aipal y dime qué hace el diff actual',
+    { agentId: 'codex-app' }
+  );
+
+  assert.deepEqual(titleCalls, [
+    {
+      agentId: 'codex-app',
+      threadId: 'thread-title',
+      title: 'revisa aipal y dime qué hace el diff actual',
+    },
+  ]);
+});
+
+test('runAgentForChat does not retitle an existing codex-app thread', async () => {
+  const titleCalls = [];
+  const { runner, threads } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    resolveThreadId: (_threads, chatId, topicId, agentId) => ({
+      threadKey: `${chatId}:${topicId || 'root'}:${agentId}`,
+      threadId: threads.get(`${chatId}:${topicId || 'root'}:${agentId}`),
+      migrated: false,
+    }),
+    runSessionBackedChatTurn: async (options) => ({
+      text: 'respuesta',
+      threadId: options.threadId,
+      turnId: 'turn-existing',
+    }),
+    setSessionBackedThreadTitle: async (options) => {
+      titleCalls.push(options);
+    },
+  });
+
+  threads.set('19:root:codex-app', 'thread-existing');
+  await runner.runAgentForChat(19, 'otro mensaje', { agentId: 'codex-app' });
+
+  assert.deepEqual(titleCalls, []);
+});
+
 test('runAgentOneShot uses the session-backed codex-app backend', async () => {
   const calls = [];
   const { runner } = buildRunner({
@@ -334,6 +423,40 @@ test('stopActiveRun queues an early stop until the codex-app turn is ready', asy
       turnId: 'turn-queued',
     },
   ]);
+});
+
+test('getActiveRunState reports codex-app activity for the topic', async () => {
+  let resolveTurn;
+  const turnDone = new Promise((resolve) => {
+    resolveTurn = resolve;
+  });
+
+  const { runner } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      options.onTurnStarted({ threadId: 'thread-status', turnId: 'turn-status' });
+      await turnDone;
+      return { text: 'ok', threadId: 'thread-status', turnId: 'turn-status' };
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(121, 'hola', {
+    agentId: 'codex-app',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const activeState = runner.getActiveRunState(121, undefined, 'codex-app');
+  assert.equal(activeState.active, true);
+  assert.equal(activeState.threadId, 'thread-status');
+  assert.equal(activeState.turnId, 'turn-status');
+
+  resolveTurn();
+  await runPromise;
+
+  const idleState = runner.getActiveRunState(121, undefined, 'codex-app');
+  assert.equal(idleState.active, false);
 });
 
 test('steerActiveRun sends steer requests to an active codex-app turn', async () => {

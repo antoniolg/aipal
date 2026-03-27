@@ -165,6 +165,104 @@ test('codex app server client initializes, streams raw progress, and returns fin
   await client.shutdown();
 });
 
+test('codex app server client lists threads and reads thread state', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/list') {
+      state.send({
+        id: message.id,
+        result: {
+          data: [
+            {
+              id: 'thread-2',
+              title: 'Sesion dos',
+              cwd: '/tmp/b',
+              updatedAt: 200,
+            },
+            {
+              id: 'thread-1',
+              title: 'Sesion uno',
+              cwd: '/tmp/a',
+              updatedAt: 100,
+            },
+          ],
+        },
+      });
+      return;
+    }
+    if (message.method === 'thread/resume') {
+      state.send({
+        id: message.id,
+        result: {
+          thread: {
+            id: 'thread-2',
+            title: 'Sesion dos',
+            cwd: '/tmp/b',
+            model: 'gpt-5.4-codex',
+            reasoningEffort: 'high',
+          },
+        },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const threads = await client.listThreads({ query: 'sesion' });
+  assert.equal(threads.length, 2);
+  assert.equal(threads[0].threadId, 'thread-2');
+  assert.equal(threads[0].title, 'Sesion dos');
+  assert.equal(threads[0].cwd, '/tmp/b');
+
+  const threadState = await client.readThreadState({ threadId: 'thread-2' });
+  assert.equal(threadState.threadId, 'thread-2');
+  assert.equal(threadState.title, 'Sesion dos');
+  assert.equal(threadState.cwd, '/tmp/b');
+  assert.equal(threadState.model, 'gpt-5.4-codex');
+  assert.equal(threadState.reasoningEffort, 'high');
+
+  await client.shutdown();
+});
+
+test('codex app server client sets thread names', async () => {
+  let renamePayload = null;
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/name/set') {
+      renamePayload = message.params;
+      state.send({ id: message.id, result: {} });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.setThreadName({
+    name: 'Revisar diff de aipal',
+    threadId: 'thread-rename',
+  });
+
+  assert.deepEqual(renamePayload, {
+    name: 'Revisar diff de aipal',
+    threadId: 'thread-rename',
+  });
+
+  await client.shutdown();
+});
+
 test('codex app server client routes approval requests and resolution events', async () => {
   const approvals = [];
   const resolvedRequests = [];

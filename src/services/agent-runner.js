@@ -24,6 +24,7 @@ function createAgentRunner(options) {
     resolveThreadId,
     runSessionBackedChatTurn,
     runSessionBackedOneShot,
+    setSessionBackedThreadTitle,
     steerSessionBackedTurn,
     stopSessionBackedTurn,
     shellQuote,
@@ -142,6 +143,33 @@ function createAgentRunner(options) {
     return run.steer({ text });
   }
 
+  function getActiveRunState(chatId, topicId, overrideAgentId) {
+    const effectiveAgentId = resolveEffectiveAgentId(
+      chatId,
+      topicId,
+      overrideAgentId
+    );
+    const run = activeRunsByKey.get(
+      buildActiveRunKey(chatId, topicId, effectiveAgentId)
+    );
+    if (!run || run.settled) {
+      return {
+        active: false,
+        agentId: effectiveAgentId,
+      };
+    }
+    return {
+      active: true,
+      agentId: effectiveAgentId,
+      finalEmitted: Boolean(run.finalEmitted),
+      lifecycleState: run.lifecycleState,
+      stopPending: Boolean(run.stopPending),
+      stopRequested: Boolean(run.stopRequested),
+      threadId: run.session?.threadId,
+      turnId: run.session?.turnId,
+    };
+  }
+
   async function runAgentOneShot(prompt) {
     const globalAgent = getGlobalAgent();
     const agent = getAgent(globalAgent);
@@ -247,6 +275,7 @@ function createAgentRunner(options) {
       topicId,
       overrideAgentId
     );
+    const originalPrompt = String(prompt || '').trim();
     const agent = getAgent(effectiveAgentId);
 
     const threads = getThreads();
@@ -468,6 +497,28 @@ function createAgentRunner(options) {
       && typeof runSessionBackedChatTurn === 'function'
     ) {
       try {
+        const buildThreadTitle = () => {
+          const clean = (value) =>
+            String(value || '')
+              .replace(/\s+/g, ' ')
+              .replace(/\[\[(image|document):[^\]]+\]\]/gi, '')
+              .trim();
+          const candidates = [
+            originalPrompt,
+            imagePaths?.length ? 'Imagen adjunta' : '',
+            documentPaths?.length ? 'Documento adjunto' : '',
+            scriptContext ? 'Salida de script' : '',
+          ];
+          for (const candidate of candidates) {
+            const normalized = clean(candidate);
+            if (!normalized) continue;
+            return normalized.length <= 80
+              ? normalized
+              : `${normalized.slice(0, 79).trimEnd()}…`;
+          }
+          return '';
+        };
+
         const sendSteer = ({ text }) => {
           const normalizedText = String(text || '').trim();
           if (!normalizedText) {
@@ -589,6 +640,20 @@ function createAgentRunner(options) {
           persistThreads().catch((err) =>
             console.warn('Failed to persist threads:', err)
           );
+          if (!threadId && typeof setSessionBackedThreadTitle === 'function') {
+            const title = buildThreadTitle();
+            if (title) {
+              Promise.resolve(
+                setSessionBackedThreadTitle({
+                  agentId: agent.id,
+                  threadId: result.threadId,
+                  title,
+                })
+              ).catch((err) => {
+                console.warn('Failed to set session-backed thread title:', err);
+              });
+            }
+          }
         }
         if (result?.text) {
           emitFinalResponse(result.text);
@@ -744,6 +809,7 @@ function createAgentRunner(options) {
 
   return {
     cancelActiveRuns,
+    getActiveRunState,
     runAgentForChat,
     runAgentOneShot,
     steerActiveRun,
