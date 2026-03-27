@@ -23,7 +23,9 @@ This bot stores a minimal JSON config with the values set by `/agent`.
 - `models` (optional): a map of agent id → model id, set via `/model` and cleared per-agent via `/model reset`. For `codex-app`, Aipal lists models through the app-server `model/list` RPC.
 - `cronChatId` (optional): Telegram chat id used for cron job messages. You can get it from `/cron chatid`.
 
-`codex-app` thread bindings are still stored in the normal thread store keyed by `chatId:topicId:agentId`. Commands like `/resume` and `/status` operate on that existing per-topic binding.
+`codex-app` thread bindings are still stored in the normal thread store keyed by `chatId:topicId:agentId`. Commands like `/resume` and `/status` operate on that existing per-topic binding. `/resume` hides `source.custom === "aipal"` sessions by default; pass `--all` to include them.
+
+`/send_to_codex` does not change the binding of the current Telegram topic. It forks the `codex-app` thread currently bound to that topic, rewrites the fork metadata so Codex App sees it as a desktop session, and assigns the fork to a workspace chosen from Codex's saved workspace roots in `~/.codex/.codex-global-state.json`.
 
 ## Agent Overrides file (optional)
 When you use `/agent <name>` inside a Telegram Topic, the bot stores an override for that specific topic in:

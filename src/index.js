@@ -133,9 +133,11 @@ const {
   loadScheduledRuns,
 } = require('./services/scheduled-runs');
 const { createApprovalService } = require('./services/approval-requests');
+const { createCodexDesktopExportService } = require('./services/codex-desktop-export');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createResumeThreadsService } = require('./services/resume-threads');
+const { createSendToCodexService } = require('./services/send-to-codex');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
 const { syncTelegramCommands } = require('./services/telegram-command-sync');
@@ -261,6 +263,7 @@ const { buildBootstrapContext, captureMemoryEvent, extractMemoryText } = memoryS
 
 const approvalService = createApprovalService({ bot });
 const codexAppServerClient = createCodexAppServerClient({ cwd: process.cwd() });
+const codexDesktopExportService = createCodexDesktopExportService();
 
 const agentRunner = createAgentRunner({
   agentMaxBuffer: AGENT_MAX_BUFFER,
@@ -449,6 +452,39 @@ const resumeThreadsService = createResumeThreadsService({
   },
 });
 
+const sendToCodexService = createSendToCodexService({
+  bot,
+  listProjects: () => codexDesktopExportService.listProjects(),
+  onSendToCodex: async (entry) => {
+    const sourceThreadId = entry?.sourceThread?.threadId;
+    if (!sourceThreadId) {
+      throw new Error('Missing source thread for send_to_codex');
+    }
+    const projectPath = String(entry?.project?.path || '').trim();
+    if (!projectPath) {
+      throw new Error('Missing destination project for send_to_codex');
+    }
+
+    const forkedThreadId = await codexAppServerClient.forkThread({
+      threadId: sourceThreadId,
+    });
+    if (!forkedThreadId) {
+      throw new Error(`thread/fork did not return a new thread id for ${sourceThreadId}`);
+    }
+
+    await codexDesktopExportService.promoteForkedThread({
+      projectPath,
+      threadId: forkedThreadId,
+    });
+
+    return {
+      forkedThreadId,
+      projectPath,
+      sourceThreadId,
+    };
+  },
+});
+
 const telegramReplyService = createTelegramReplyService({
   bot,
   chunkMarkdown,
@@ -597,9 +633,25 @@ registerCommands({
       })
       .join('\n');
   },
-  listResumeThreads: async ({ agentId, query }) => {
+  listResumeThreads: async ({ agentId, includeAipal, query }) => {
     if (agentId !== AGENT_CODEX_APP) return [];
-    return codexAppServerClient.listThreads({ query });
+    const threads = await codexAppServerClient.listThreads({ query });
+    if (includeAipal) return threads;
+    return threads.filter((thread) => thread?.sourceCustom !== 'aipal');
+  },
+  getSendToCodexSourceThread: async ({ agentId, chatId, topicId }) => {
+    if (agentId !== AGENT_CODEX_APP) return null;
+    const threadId = getCodexAppThreadId(chatId, topicId);
+    if (!threadId) return null;
+    const threads = await codexAppServerClient.listThreads({});
+    const hit = threads.find((thread) => thread.threadId === threadId);
+    if (!hit) {
+      return { threadId };
+    }
+    if (hit.sourceCustom && hit.sourceCustom !== 'aipal') {
+      return null;
+    }
+    return hit;
   },
   listRecentRuns,
   listScheduledRuns: listScheduledRunsFile,
@@ -642,6 +694,8 @@ registerCommands({
   searchMemory,
   sendResumeThreadPicker: (ctx, params) =>
     resumeThreadsService.sendThreadPicker(ctx, params),
+  sendToCodexPicker: (ctx, sourceThread) =>
+    sendToCodexService.sendProjectPicker(ctx, sourceThread),
   setAgentOverride: (chatId, topicId, agentId) =>
     setAgentOverride(agentOverrides, chatId, topicId, agentId),
   setGlobalAgent: (value) => {
@@ -683,7 +737,9 @@ registerHandlers({
   handleCallbackQuery: async (ctx) => {
     const approvalHandled = await approvalService.handleCallbackQuery(ctx);
     if (approvalHandled) return true;
-    return resumeThreadsService.handleCallbackQuery(ctx);
+    const resumeHandled = await resumeThreadsService.handleCallbackQuery(ctx);
+    if (resumeHandled) return true;
+    return sendToCodexService.handleCallbackQuery(ctx);
   },
   imageDir: IMAGE_DIR,
   lastScriptOutputs,
