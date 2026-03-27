@@ -162,6 +162,7 @@ function createSendToCodexService(options) {
       sourceThread,
       topicId,
     };
+    pendingProjectPickers.set(pickerId, entry);
     const tokenById = registerSelectionTokens({
       chatId: ctx.chat.id,
       itemMap: new Map(items.map((item) => [item.id, item])),

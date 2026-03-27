@@ -75,3 +75,56 @@ test('send to codex service shows project picker for the current session and con
 
   service.shutdown();
 });
+
+test('send to codex service paginates project picker results', async () => {
+  const { bot, sentMessages } = createBotRecorder();
+  const edits = [];
+  const answers = [];
+  const service = createSendToCodexService({
+    bot,
+    listProjects: async () =>
+      Array.from({ length: 11 }, (_, index) => ({
+        active: index === 0,
+        label: `Proyecto ${index + 1}`,
+        path: `/Users/antonio/Projects/demo-${index + 1}`,
+      })),
+    onSendToCodex: async () => {
+      throw new Error('should not export during pagination test');
+    },
+  });
+
+  await service.sendProjectPicker(
+    {
+      chat: { id: 123 },
+      message: { message_thread_id: 77 },
+    },
+    { threadId: 'thread-aipal-1', title: 'Sesion 1', cwd: '/tmp/aipal-1' }
+  );
+
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0].text, /Mostrando 1-10/);
+  const nextCallback =
+    sentMessages[0].options.reply_markup.inline_keyboard.at(-1)[0].callback_data;
+  assert.match(nextCallback, /^send_to_codex_project_page:/);
+
+  const handled = await service.handleCallbackQuery({
+    answerCbQuery: async (text = '') => {
+      answers.push(text);
+    },
+    callbackQuery: { data: nextCallback },
+    editMessageText: async (text, options) => {
+      edits.push({ options, text });
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(edits.length, 1);
+  assert.match(edits[0].text, /Mostrando 11-11/);
+  assert.equal(
+    edits[0].options.reply_markup.inline_keyboard.at(-1)[0].text,
+    'Anterior'
+  );
+  assert.equal(answers.at(-1), '');
+
+  service.shutdown();
+});

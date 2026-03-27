@@ -312,29 +312,29 @@ test('createReplyProgressReporter renders raw codex-app progress without Thinkin
   assert.deepEqual(deleted, [{ chatId: -123, messageId: 556 }]);
 });
 
-test('createReplyProgressReporter uses sendMessageDraft in private chats', async () => {
-  const apiCalls = [];
+test('createReplyProgressReporter uses a persistent Telegram message in private chats', async () => {
+  const sent = [];
+  const edited = [];
+  const deleted = [];
   const ctx = {
     chat: { id: 123 },
     message: {},
-    reply: async () => {
-      throw new Error('reply should not be used for private streaming drafts');
+    reply: async (text, options) => {
+      sent.push({ text, options });
+      return { message_id: 901 };
     },
     telegram: {
-      deleteMessage: async () => {},
-      editMessageText: async () => {},
+      deleteMessage: async (chatId, messageId) => {
+        deleted.push({ chatId, messageId });
+      },
+      editMessageText: async (chatId, messageId, _inline, text, options) => {
+        edited.push({ chatId, messageId, text, options });
+      },
     },
   };
 
   const service = createTelegramReplyService({
-    bot: {
-      telegram: {
-        callApi: async (method, payload) => {
-          apiCalls.push({ method, payload });
-          return true;
-        },
-      },
-    },
+    bot: { telegram: {} },
     chunkMarkdown: () => [],
     chunkText: () => [],
     createScheduledRun: async () => null,
@@ -356,14 +356,17 @@ test('createReplyProgressReporter uses sendMessageDraft in private chats', async
 
   const reporter = service.createReplyProgressReporter(ctx);
   await reporter.update({ mode: 'raw', text: 'Leyendo repo...' });
+  await reporter.update({ mode: 'raw', text: 'Leyendo repo...\n\nAbriendo archivos' });
   await reporter.finish();
 
-  assert.equal(apiCalls.length, 1);
-  assert.equal(apiCalls[0].method, 'sendMessageDraft');
-  assert.equal(apiCalls[0].payload.chat_id, 123);
-  assert.equal(apiCalls[0].payload.text, 'Leyendo repo...');
-  assert.equal(apiCalls[0].payload.parse_mode, 'HTML');
-  assert.equal(apiCalls[0].payload.draft_id > 0, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].text, 'Leyendo repo...');
+  assert.equal(sent[0].options.parse_mode, 'HTML');
+  assert.equal(edited.length, 1);
+  assert.equal(edited[0].chatId, 123);
+  assert.equal(edited[0].messageId, 901);
+  assert.equal(edited[0].text, 'Leyendo repo...\n\nAbriendo archivos');
+  assert.deepEqual(deleted, [{ chatId: 123, messageId: 901 }]);
 });
 
 test('createReplyProgressReporter retries delete on finish after retry_after', async () => {

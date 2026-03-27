@@ -130,10 +130,6 @@ function createTelegramReplyService(options) {
     }
 
     async function applyProgress(payload) {
-      if (transport.mode === 'draft') {
-        await withRetry(() => transport.send(payload));
-        return;
-      }
       if (!progressMessageId) {
         const message = await withRetry(() => transport.send(payload));
         progressMessageId = message?.message_id || null;
@@ -211,23 +207,7 @@ function createTelegramReplyService(options) {
 
   function createReplyProgressReporter(ctx) {
     const chatId = ctx?.chat?.id;
-    const isPrivateChat = chatId > 0;
     const threadExtra = getReplyThreadExtra(ctx);
-    if (isPrivateChat) {
-      const draftId = Math.max(1, Date.now() % 2147483647);
-      return createProgressReporter({
-        minIntervalMs: progressUpdateMinIntervalMs,
-        mode: 'draft',
-        send: async (payload) =>
-          bot.telegram.callApi('sendMessageDraft', {
-            chat_id: chatId,
-            draft_id: draftId,
-            text: payload.text,
-            parse_mode: 'HTML',
-            ...threadExtra,
-          }),
-      });
-    }
     return createProgressReporter({
       minIntervalMs: progressUpdateMinIntervalMs,
       send: async (payload) =>
@@ -248,21 +228,6 @@ function createTelegramReplyService(options) {
 
   function createChatProgressReporter(chatId, topicId) {
     const threadExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
-    if (chatId > 0) {
-      const draftId = Math.max(1, Date.now() % 2147483647);
-      return createProgressReporter({
-        minIntervalMs: progressUpdateMinIntervalMs,
-        mode: 'draft',
-        send: async (payload) =>
-          bot.telegram.callApi('sendMessageDraft', {
-            chat_id: chatId,
-            draft_id: draftId,
-            text: payload.text,
-            parse_mode: 'HTML',
-            ...threadExtra,
-          }),
-      });
-    }
     return createProgressReporter({
       minIntervalMs: progressUpdateMinIntervalMs,
       send: async (payload) =>
