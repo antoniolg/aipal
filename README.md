@@ -196,7 +196,7 @@ To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of T
 
 ## How it works
 - For shell-backed agents, builds a base64-encoded prompt and executes locally via `bash -lc`
-- For `codex-app`, maintains a persistent `codex app-server --session-source aipal` process and streams JSON-RPC events
+- For `codex-app`, maintains a persistent `codex app-server` process and streams JSON-RPC events
 - Stores thread/session ids per agent so legacy `codex` and `codex-app` do not collide
 - Audio is downloaded, transcribed, then forwarded as text
 - Images are downloaded into the image folder and included in the prompt
@@ -204,7 +204,7 @@ To restrict access, set `ALLOWED_USERS` in `.env` to a comma-separated list of T
 ## Troubleshooting
 - `ENOENT mlx_whisper`: install `mlx-whisper` and ensure `mlx_whisper` is on PATH.
 - `Error processing response.`: check that your selected agent is installed and accessible on PATH.
-- `Codex app-server exited`: check that the installed `codex` binary supports `app-server` and that it starts correctly with `codex app-server --session-source aipal`.
+- `Codex app-server exited`: check that the installed `codex` binary supports `app-server` and that it starts correctly with `codex app-server`.
 - Telegram `ECONNRESET`: usually transient network, retry.
 
 ## License

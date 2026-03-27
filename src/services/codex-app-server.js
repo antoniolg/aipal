@@ -2,11 +2,11 @@ const cp = require('child_process');
 const readline = require('node:readline');
 
 const SERVER_COMMAND = 'codex';
-const SERVER_ARGS = ['app-server', '--session-source', 'aipal'];
+const SERVER_ARGS = ['app-server'];
 const CLIENT_INFO = {
   name: 'aipal',
   title: 'Aipal',
-  version: '0.2.0',
+  version: '0.4.0',
 };
 
 function asRecord(value) {

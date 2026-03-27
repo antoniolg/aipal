@@ -142,7 +142,7 @@ test('codex app server client initializes, streams raw progress, and returns fin
 
   assert.equal(harness.spawns.length, 1);
   assert.equal(harness.spawns[0].cmd, 'codex');
-  assert.deepEqual(harness.spawns[0].args, ['app-server', '--session-source', 'aipal']);
+  assert.deepEqual(harness.spawns[0].args, ['app-server']);
   assert.equal(harness.spawns[0].opts.cwd, process.cwd());
   assert.equal(harness.spawns[0].messages[0].method, 'initialize');
   assert.equal(harness.spawns[0].messages[1].method, 'initialized');

@@ -250,6 +250,7 @@ test('createReplyProgressReporter reuses a single Telegram message', async () =>
   assert.equal(sent.length, 1);
   assert.equal(edited.length, 1);
   assert.match(sent[0].text, /<b>mirando<\/b>/);
+  assert.equal(sent[0].options.disable_notification, true);
   assert.match(edited[0].text, /<code>cambio<\/code>/);
   assert.equal(edited[0].messageId, 555);
   assert.equal(edited[0].options.message_thread_id, 77);
@@ -361,6 +362,7 @@ test('createReplyProgressReporter uses a persistent Telegram message in private 
 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].text, 'Leyendo repo...');
+  assert.equal(sent[0].options.disable_notification, true);
   assert.equal(sent[0].options.parse_mode, 'HTML');
   assert.equal(edited.length, 1);
   assert.equal(edited[0].chatId, 123);

@@ -212,6 +212,7 @@ function createTelegramReplyService(options) {
       minIntervalMs: progressUpdateMinIntervalMs,
       send: async (payload) =>
         ctx.reply(payload.html, {
+          disable_notification: true,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
           ...threadExtra,
@@ -232,6 +233,7 @@ function createTelegramReplyService(options) {
       minIntervalMs: progressUpdateMinIntervalMs,
       send: async (payload) =>
         bot.telegram.sendMessage(chatId, payload.html, {
+          disable_notification: true,
           parse_mode: 'HTML',
           disable_web_page_preview: true,
           ...threadExtra,
