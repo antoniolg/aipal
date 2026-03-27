@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-03-27
+### Added
+- `codex-app` integration via Codex App Server, including approvals, `/stop`, `/resume`, `/status`, and `/send_to_codex`.
+- Persistent Telegram command sync for private and group chats.
+
+### Changed
+- Telegram progress updates now use persistent editable messages in both private chats and groups.
+- `/resume` now supports pagination, source labels, and hiding `aipal` sessions by default unless `--all` is used.
+
 ### Fixed
 - Enforced timeout termination for PTY-backed agent runs by killing the full child process group, preventing stuck cron/topic queues.
 
