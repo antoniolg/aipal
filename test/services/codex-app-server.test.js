@@ -144,6 +144,10 @@ test('codex app server client initializes, streams raw progress, and returns fin
   assert.equal(harness.spawns[0].cmd, 'codex');
   assert.deepEqual(harness.spawns[0].args, ['app-server']);
   assert.equal(harness.spawns[0].opts.cwd, process.cwd());
+  assert.equal(
+    harness.spawns[0].opts.env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE,
+    'aipal'
+  );
   assert.equal(harness.spawns[0].messages[0].method, 'initialize');
   assert.equal(harness.spawns[0].messages[1].method, 'initialized');
   assert.equal(harness.spawns[0].messages[2].method, 'thread/start');
@@ -181,6 +185,7 @@ test('codex app server client lists threads and reads thread state', async () =>
               id: 'thread-2',
               title: 'Sesion dos',
               cwd: '/tmp/b',
+              originator: 'codex_cli_rs',
               updatedAt: 200,
               source: 'cli',
             },
@@ -188,6 +193,7 @@ test('codex app server client lists threads and reads thread state', async () =>
               id: 'thread-1',
               title: 'Sesion uno',
               cwd: '/tmp/a',
+              originator: 'aipal',
               updatedAt: 100,
               source: { custom: 'aipal' },
             },
@@ -222,8 +228,10 @@ test('codex app server client lists threads and reads thread state', async () =>
   assert.equal(threads[0].threadId, 'thread-2');
   assert.equal(threads[0].title, 'Sesion dos');
   assert.equal(threads[0].cwd, '/tmp/b');
+  assert.equal(threads[0].originator, 'codex_cli_rs');
   assert.equal(threads[0].sourceKind, 'cli');
   assert.equal(threads[0].sourceLabel, 'cli');
+  assert.equal(threads[1].originator, 'aipal');
   assert.equal(threads[1].sourceCustom, 'aipal');
 
   const threadState = await client.readThreadState({ threadId: 'thread-2' });

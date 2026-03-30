@@ -637,7 +637,7 @@ registerCommands({
     if (agentId !== AGENT_CODEX_APP) return [];
     const threads = await codexAppServerClient.listThreads({ query });
     if (includeAipal) return threads;
-    return threads.filter((thread) => thread?.sourceCustom !== 'aipal');
+    return threads.filter((thread) => thread?.originator !== 'aipal');
   },
   getSendToCodexSourceThread: async ({ agentId, chatId, topicId }) => {
     if (agentId !== AGENT_CODEX_APP) return null;
@@ -648,7 +648,7 @@ registerCommands({
     if (!hit) {
       return { threadId };
     }
-    if (hit.sourceCustom && hit.sourceCustom !== 'aipal') {
+    if (hit.originator && hit.originator !== 'aipal') {
       return null;
     }
     return hit;

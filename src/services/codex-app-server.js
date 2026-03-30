@@ -3,6 +3,8 @@ const readline = require('node:readline');
 
 const SERVER_COMMAND = 'codex';
 const SERVER_ARGS = ['app-server'];
+const ORIGINATOR_OVERRIDE_ENV = 'CODEX_INTERNAL_ORIGINATOR_OVERRIDE';
+const ORIGINATOR_OVERRIDE_VALUE = 'aipal';
 const CLIENT_INFO = {
   name: 'aipal',
   title: 'Aipal',
@@ -98,6 +100,11 @@ function extractThreadsFromValue(value) {
         pickNumber(record, ['updatedAt', 'updated_at', 'lastActivityAt', 'createdAt'])
         || pickNumber(sessionRecord, ['updatedAt', 'updated_at', 'lastActivityAt', 'createdAt'])
       ),
+      originator:
+        pickString(record, ['originator'])
+        || pickString(threadRecord, ['originator'])
+        || pickString(sessionRecord, ['originator'])
+        || undefined,
       sourceCustom: pickString(sourceRecord, ['custom']) || undefined,
       sourceKind:
         (typeof sourceValue === 'string' ? sourceValue.trim() : undefined)
@@ -133,6 +140,11 @@ function extractThreadState(value, fallbackThreadId) {
       pickString(record, ['cwd', 'projectKey', 'project_key'])
       || pickString(threadRecord, ['cwd', 'projectKey', 'project_key'])
       || pickString(sessionRecord, ['cwd', 'projectKey', 'project_key'])
+      || undefined,
+    originator:
+      pickString(record, ['originator'])
+      || pickString(threadRecord, ['originator'])
+      || pickString(sessionRecord, ['originator'])
       || undefined,
     model:
       pickString(record, ['model'])
@@ -677,6 +689,10 @@ function createCodexAppServerClient(options = {}) {
     startPromise = (async () => {
       proc = spawnProcess(serverCommand, serverArgs, {
         cwd,
+        env: {
+          ...process.env,
+          [ORIGINATOR_OVERRIDE_ENV]: ORIGINATOR_OVERRIDE_VALUE,
+        },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       if (proc.stdout && typeof proc.stdout.setEncoding === 'function') {
