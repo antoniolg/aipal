@@ -83,6 +83,18 @@ function parseOutput(output) {
   return { text: typeof text === 'string' ? text.trim() : '', threadId, sawJson: true };
 }
 
+function parseStreamingOutput(output) {
+  const parsed = parseOutput(output);
+  const text = parsed.sawJson ? String(parsed.text || '').trim() : '';
+  return {
+    text,
+    threadId: parsed.threadId,
+    sawJson: parsed.sawJson,
+    sawFinal: parsed.sawJson && Boolean(text),
+    commentaryMessages: [],
+  };
+}
+
 module.exports = {
   id: 'claude',
   label: 'claude',
@@ -90,4 +102,5 @@ module.exports = {
   mergeStderr: false,
   buildCommand,
   parseOutput,
+  parseStreamingOutput,
 };

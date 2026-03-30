@@ -35,6 +35,18 @@ function parseOutput(output) {
   return { text: response, threadId: undefined, sawJson: true };
 }
 
+function parseStreamingOutput(output) {
+  const parsed = parseOutput(output);
+  const text = parsed.sawJson ? String(parsed.text || '').trim() : '';
+  return {
+    text,
+    threadId: parsed.threadId,
+    sawJson: parsed.sawJson,
+    sawFinal: parsed.sawJson && Boolean(text),
+    commentaryMessages: [],
+  };
+}
+
 function listSessionsCommand() {
   return `${GEMINI_CMD} --list-sessions`;
 }
@@ -58,6 +70,7 @@ module.exports = {
   mergeStderr: false,
   buildCommand,
   parseOutput,
+  parseStreamingOutput,
   listSessionsCommand,
   parseSessionList,
 };

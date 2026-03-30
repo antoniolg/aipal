@@ -227,6 +227,27 @@ test('parseAgentOutput sanitizes claude session id with trailing quote/backslash
   assert.equal(parsed.text, 'ok');
 });
 
+test('parseStreamingOutput emits a final Claude response once JSON is complete', () => {
+  const agent = getAgent('claude');
+  const parsed = agent.parseStreamingOutput(
+    JSON.stringify({
+      result: 'hola desde streaming',
+      session_id: '550e8400-e29b-41d4-a716-446655440000',
+    })
+  );
+  assert.equal(parsed.sawFinal, true);
+  assert.equal(parsed.text, 'hola desde streaming');
+  assert.equal(parsed.threadId, '550e8400-e29b-41d4-a716-446655440000');
+  assert.deepEqual(parsed.commentaryMessages, []);
+});
+
+test('parseStreamingOutput ignores incomplete Claude JSON', () => {
+  const agent = getAgent('claude');
+  const parsed = agent.parseStreamingOutput('{"result":"hola');
+  assert.equal(parsed.sawFinal, false);
+  assert.equal(parsed.text, '');
+});
+
 test('buildAgentCommand builds gemini headless command', () => {
   const agent = getAgent('gemini');
   const command = agent.buildCommand({ prompt: 'hello', threadId: 'session-3' });
@@ -244,6 +265,16 @@ test('parseAgentOutput extracts gemini response', () => {
   assert.equal(parsed.threadId, undefined);
   assert.equal(parsed.text, 'hola');
   assert.equal(parsed.sawJson, true);
+});
+
+test('parseStreamingOutput emits a final Gemini response once JSON is complete', () => {
+  const agent = getAgent('gemini');
+  const parsed = agent.parseStreamingOutput(
+    JSON.stringify({ response: 'hola gemini' })
+  );
+  assert.equal(parsed.sawFinal, true);
+  assert.equal(parsed.text, 'hola gemini');
+  assert.deepEqual(parsed.commentaryMessages, []);
 });
 
 
