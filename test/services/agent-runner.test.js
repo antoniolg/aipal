@@ -104,6 +104,55 @@ test('runAgentForChat streams codex final response before process exit', async (
   assert.equal(persistedThreadSnapshots.length, 1);
 });
 
+test('runAgentForChat streams claude final response before process exit', async () => {
+  const order = [];
+  let resolveExec;
+  const execDone = new Promise((resolve) => {
+    resolveExec = resolve;
+  });
+
+  const output = JSON.stringify({
+    result: 'respuesta claude',
+    session_id: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  const { runner, threads, persistedThreadSnapshots } = buildRunner({
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'claude',
+    execLocal: async () => {
+      throw new Error('non-streaming shell path should not be used for claude');
+    },
+    execLocalStreaming: async (_cmd, _args, options) => {
+      options.onSpawn({ pid: 777, kill: () => {} });
+      options.onStdout(`${output}\n`);
+      order.push('stdout-finished');
+      await execDone;
+      return `${output}\n`;
+    },
+  });
+
+  const runPromise = runner.runAgentForChat(52, 'hola', {
+    agentId: 'claude',
+    onFinalResponse: async (text) => {
+      order.push(`callback:${text}`);
+    },
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.ok(order.includes('callback:respuesta claude'));
+
+  resolveExec();
+  const response = await runPromise;
+
+  assert.equal(response, 'respuesta claude');
+  assert.equal(
+    threads.get('52:root:claude'),
+    '550e8400-e29b-41d4-a716-446655440000'
+  );
+  assert.equal(persistedThreadSnapshots.length, 1);
+});
+
 test('runAgentForChat kills a lingering process after final emission and drops late progress', async () => {
   const progressUpdates = [];
   const settled = [];
