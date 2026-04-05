@@ -1,6 +1,5 @@
 const fs = require('node:fs');
 const path = require('path');
-const { resolveGptFriendlyOverlay } = require('./gpt-friendly-overlay');
 
 function chunkText(text, size) {
   const chunks = [];
@@ -315,10 +314,6 @@ function buildPrompt(
   const defaultTimeZone = options.defaultTimeZone || 'Europe/Madrid';
   const currentDate =
     options.currentDate instanceof Date ? options.currentDate : new Date();
-  const gptFriendlyOverlay = resolveGptFriendlyOverlay({
-    agentId: options.agentId,
-    model: options.model,
-  });
   const lines = [];
   lines.push(
     'Output style for Telegram: reply only with the final user-facing answer. Do not include reasoning, chain-of-thought, planning steps, or internal process.'
@@ -326,10 +321,6 @@ function buildPrompt(
   lines.push(
     `Current local time reference: ${currentDate.toISOString()} (default timezone: ${defaultTimeZone}).`
   );
-  if (gptFriendlyOverlay) {
-    lines.push('GPT-friendly overlay:');
-    lines.push(gptFriendlyOverlay);
-  }
   const context = (scriptContext || '').trim();
   if (context) {
     lines.push('Context from last slash command output:');

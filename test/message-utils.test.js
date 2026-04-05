@@ -125,7 +125,7 @@ test('buildPrompt includes scheduling guidance for ambiguous future requests', (
   assert.match(prompt, /ask one concise clarification/);
 });
 
-test('buildPrompt injects the GPT-friendly overlay for codex-app', () => {
+test('buildPrompt does not inject the deprecated GPT-friendly overlay', () => {
   const prompt = buildPrompt(
     'hola',
     [],
@@ -135,25 +135,6 @@ test('buildPrompt injects the GPT-friendly overlay for codex-app', () => {
     '/tmp/aipal/documents',
     {
       agentId: 'codex-app',
-      model: 'gpt-5.4',
-    }
-  );
-
-  assert.match(prompt, /GPT-friendly overlay:/);
-  assert.match(prompt, /## GPT Friendly Execution/);
-  assert.match(prompt, /If the latest user message is a short approval like "ok", "si", or "adelante", continue directly\./);
-});
-
-test('buildPrompt does not inject the GPT-friendly overlay for other agents', () => {
-  const prompt = buildPrompt(
-    'hola',
-    [],
-    '/tmp/aipal/images',
-    '',
-    [],
-    '/tmp/aipal/documents',
-    {
-      agentId: 'codex',
       model: 'gpt-5.4',
     }
   );

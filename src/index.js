@@ -262,7 +262,10 @@ const memoryService = createMemoryService({
 const { buildBootstrapContext, captureMemoryEvent, extractMemoryText } = memoryService;
 
 const approvalService = createApprovalService({ bot });
-const codexAppServerClient = createCodexAppServerClient({ cwd: process.cwd() });
+const codexAppServerClient = createCodexAppServerClient({
+  cwd: process.cwd(),
+  defaultPersonality: 'friendly',
+});
 const codexDesktopExportService = createCodexDesktopExportService();
 
 const agentRunner = createAgentRunner({
