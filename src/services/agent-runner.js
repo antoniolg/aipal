@@ -321,6 +321,7 @@ function createAgentRunner(options) {
     }
 
     const thinking = getGlobalThinking();
+    const model = getGlobalModels()[effectiveAgentId];
     const finalPrompt = buildPrompt(
       promptWithContext,
       imagePaths || [],
@@ -329,14 +330,15 @@ function createAgentRunner(options) {
       documentPaths || [],
       documentDir,
       {
+        agentId: effectiveAgentId,
         includeFileInstructions: shouldIncludeFileInstructions,
         currentDate: new Date(),
         defaultTimeZone,
+        model,
       }
     );
     const promptBase64 = Buffer.from(finalPrompt, 'utf8').toString('base64');
     const promptExpression = '"$PROMPT"';
-    const model = getGlobalModels()[effectiveAgentId];
     const agentCmd =
       agent.backend === 'app-server'
         ? null

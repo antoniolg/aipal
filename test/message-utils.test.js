@@ -125,6 +125,43 @@ test('buildPrompt includes scheduling guidance for ambiguous future requests', (
   assert.match(prompt, /ask one concise clarification/);
 });
 
+test('buildPrompt injects the GPT-friendly overlay for codex-app', () => {
+  const prompt = buildPrompt(
+    'hola',
+    [],
+    '/tmp/aipal/images',
+    '',
+    [],
+    '/tmp/aipal/documents',
+    {
+      agentId: 'codex-app',
+      model: 'gpt-5.4',
+    }
+  );
+
+  assert.match(prompt, /GPT-friendly overlay:/);
+  assert.match(prompt, /## GPT Friendly Execution/);
+  assert.match(prompt, /If the latest user message is a short approval like "ok", "si", or "adelante", continue directly\./);
+});
+
+test('buildPrompt does not inject the GPT-friendly overlay for other agents', () => {
+  const prompt = buildPrompt(
+    'hola',
+    [],
+    '/tmp/aipal/images',
+    '',
+    [],
+    '/tmp/aipal/documents',
+    {
+      agentId: 'codex',
+      model: 'gpt-5.4',
+    }
+  );
+
+  assert.doesNotMatch(prompt, /GPT-friendly overlay:/);
+  assert.doesNotMatch(prompt, /## GPT Friendly Execution/);
+});
+
 test('parseSlashCommand parses args', () => {
   const parsed = parseSlashCommand('/inbox --max 3');
   assert.deepEqual(parsed, { name: 'inbox', args: '--max 3' });

@@ -50,6 +50,32 @@ function buildRunner(overrides = {}) {
   return { runner, threads, persistedThreadSnapshots };
 }
 
+test('runAgentForChat passes the resolved model into buildPrompt before command setup', async () => {
+  const buildPromptCalls = [];
+
+  const { runner } = buildRunner({
+    getGlobalModels: () => ({ codex: 'gpt-5.4' }),
+    buildPrompt: (prompt, imagePaths, imageDir, scriptContext, documentPaths, documentDir, options) => {
+      buildPromptCalls.push({
+        prompt,
+        imagePaths,
+        imageDir,
+        scriptContext,
+        documentPaths,
+        documentDir,
+        options,
+      });
+      return prompt;
+    },
+  });
+
+  await runner.runAgentForChat(41, 'hola', {});
+
+  assert.equal(buildPromptCalls.length, 1);
+  assert.equal(buildPromptCalls[0].options.agentId, 'codex');
+  assert.equal(buildPromptCalls[0].options.model, 'gpt-5.4');
+});
+
 test('runAgentForChat streams codex final response before process exit', async () => {
   const order = [];
   const progressUpdates = [];
