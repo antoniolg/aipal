@@ -185,6 +185,7 @@ let memoryEventsSinceCurate = 0;
 let globalThinking;
 let globalAgent = AGENT_CODEX;
 let globalModels = {};
+let globalServiceTiers = {};
 let cronDefaultChatId = null;
 let oneShotScheduler = null;
 const enqueue = createEnqueue(queues);
@@ -313,6 +314,7 @@ const agentRunner = createAgentRunner({
           chatId: options.chatId,
           topicId: options.topicId,
         }),
+      serviceTier: globalServiceTiers[AGENT_CODEX_APP] || undefined,
       sandboxPolicy: { type: 'dangerFullAccess' },
       threadId: options.threadId,
     });
@@ -327,6 +329,7 @@ const agentRunner = createAgentRunner({
       effort: options.effort,
       input: buildCodexAppInputs(options.prompt, []),
       model: options.model,
+      serviceTier: globalServiceTiers[AGENT_CODEX_APP] || undefined,
       sandboxPolicy: { type: 'dangerFullAccess' },
     });
   },
@@ -392,6 +395,7 @@ function formatThreadStatusMessage({
   const lines = [
     `<b>Agente activo:</b> ${escapeHtml(getAgentLabel(effectiveAgentId))}`,
     `<b>Modelo de codex-app:</b> ${escapeHtml(globalModels[AGENT_CODEX_APP] || '(default)')}`,
+    `<b>Service tier de codex-app:</b> ${escapeHtml(globalServiceTiers[AGENT_CODEX_APP] || 'flex')}`,
     `<b>Reasoning:</b> ${escapeHtml(globalThinking || '(default)')}`,
     threadBinding
       ? `<b>Thread de codex-app:</b> <code>${escapeHtml(threadBinding)}</code>`
@@ -575,6 +579,7 @@ async function hydrateGlobalSettings() {
   const config = await readConfig();
   if (config.agent) globalAgent = normalizeAgent(config.agent);
   if (config.models) globalModels = { ...config.models };
+  if (config.serviceTiers) globalServiceTiers = { ...config.serviceTiers };
   return config;
 }
 
@@ -614,6 +619,7 @@ registerCommands({
   getCodexAppThreadId,
   getGlobalAgent: () => globalAgent,
   getGlobalModels: () => globalModels,
+  getGlobalServiceTiers: () => globalServiceTiers,
   getGlobalThinking: () => globalThinking,
   getMemoryStatus,
   getThreadTail,
@@ -706,6 +712,9 @@ registerCommands({
   },
   setGlobalModels: (value) => {
     globalModels = value;
+  },
+  setGlobalServiceTiers: (value) => {
+    globalServiceTiers = value;
   },
   setGlobalThinking: (value) => {
     globalThinking = value;

@@ -13,6 +13,7 @@ function registerSettingsCommands(options) {
     getAgentOverride,
     getGlobalAgent,
     getGlobalModels,
+    getGlobalServiceTiers,
     getGlobalThinking,
     getTopicId,
     isKnownAgent,
@@ -27,6 +28,7 @@ function registerSettingsCommands(options) {
     setAgentOverride,
     setGlobalAgent,
     setGlobalModels,
+    setGlobalServiceTiers,
     setGlobalThinking,
     setMemoryEventsSinceCurate,
     startTyping,
@@ -212,6 +214,37 @@ function registerSettingsCommands(options) {
     } catch (err) {
       console.error(err);
       await replyWithError(ctx, 'Failed to persist model setting.', err);
+    }
+  });
+
+  bot.command('fast', async (ctx) => {
+    const topicId = getTopicId(ctx);
+    const currentAgentId =
+      getAgentOverride(ctx.chat.id, topicId) || getGlobalAgent();
+
+    if (currentAgentId !== 'codex-app') {
+      await ctx.reply('/fast solo está soportado para codex-app.');
+      return;
+    }
+
+    try {
+      const currentTier = getGlobalServiceTiers()?.[currentAgentId] || 'flex';
+      const nextTier = currentTier === 'fast' ? 'flex' : 'fast';
+      const nextServiceTiers = {
+        ...(getGlobalServiceTiers() || {}),
+        [currentAgentId]: nextTier,
+      };
+      setGlobalServiceTiers(nextServiceTiers);
+      await updateConfig({ serviceTiers: getGlobalServiceTiers() });
+
+      await ctx.reply(
+        nextTier === 'fast'
+          ? 'codex-app ahora usa service tier fast.'
+          : 'codex-app ahora usa service tier flex.'
+      );
+    } catch (err) {
+      console.error(err);
+      await replyWithError(ctx, 'Failed to persist fast mode setting.', err);
     }
   });
 }

@@ -743,10 +743,12 @@ function createCodexAppServerClient(options = {}) {
     return requestInternal(method, params);
   }
 
-  async function createThread(threadId, model, personality) {
+  async function createThread(threadId, model, personality, serviceTier) {
     if (threadId) {
       await request('thread/resume', omitUndefined({
+        model,
         personality,
+        serviceTier,
         threadId,
       }));
       return threadId;
@@ -754,6 +756,7 @@ function createCodexAppServerClient(options = {}) {
     const result = await request('thread/start', omitUndefined({
       model,
       personality,
+      serviceTier,
     }));
     const createdThreadId =
       result.thread?.id || result.threadId || result.id || null;
@@ -777,11 +780,17 @@ function createCodexAppServerClient(options = {}) {
       onProgressUpdate,
       personality = defaultPersonality,
       requestApproval,
+      serviceTier,
       sandboxPolicy = { type: 'dangerFullAccess' },
       threadId,
     } = options;
 
-    const resolvedThreadId = await createThread(threadId, model, personality);
+    const resolvedThreadId = await createThread(
+      threadId,
+      model,
+      personality,
+      serviceTier
+    );
     const context = createTurnContext({
       includeAgentDeltas,
       onApprovalResolved,
@@ -801,6 +810,7 @@ function createCodexAppServerClient(options = {}) {
         input,
         model,
         personality,
+        serviceTier,
         sandboxPolicy,
         threadId: resolvedThreadId,
       }));

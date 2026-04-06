@@ -259,6 +259,96 @@ test('codex app server client sends default personality on thread/resume', async
   await client.shutdown();
 });
 
+test('codex app server client forwards service tier on thread/start and turn/start', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: { serverInfo: { name: 'codex-app-server' } } });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-fast' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-fast' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-fast',
+            turn: { id: 'turn-fast', status: 'completed' },
+          },
+        });
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.runChatTurn({
+    cwd: '/tmp/demo',
+    input: [{ type: 'text', text: 'hola' }],
+    serviceTier: 'fast',
+  });
+
+  assert.equal(harness.spawns[0].messages[2].method, 'thread/start');
+  assert.equal(harness.spawns[0].messages[2].params.serviceTier, 'fast');
+  assert.equal(harness.spawns[0].messages[3].method, 'turn/start');
+  assert.equal(harness.spawns[0].messages[3].params.serviceTier, 'fast');
+
+  await client.shutdown();
+});
+
+test('codex app server client forwards service tier on thread/resume', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: { serverInfo: { name: 'codex-app-server' } } });
+      return;
+    }
+    if (message.method === 'thread/resume') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-fast-existing' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-fast-existing' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-fast-existing',
+            turn: { id: 'turn-fast-existing', status: 'completed' },
+          },
+        });
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.runChatTurn({
+    cwd: '/tmp/demo',
+    input: [{ type: 'text', text: 'hola otra vez' }],
+    serviceTier: 'fast',
+    threadId: 'thread-fast-existing',
+  });
+
+  assert.equal(harness.spawns[0].messages[2].method, 'thread/resume');
+  assert.equal(harness.spawns[0].messages[2].params.threadId, 'thread-fast-existing');
+  assert.equal(harness.spawns[0].messages[2].params.serviceTier, 'fast');
+  assert.equal(harness.spawns[0].messages[3].method, 'turn/start');
+  assert.equal(harness.spawns[0].messages[3].params.serviceTier, 'fast');
+
+  await client.shutdown();
+});
+
 test('codex app server client lists threads and reads thread state', async () => {
   const logger = { warn() {} };
   const harness = createSpawnHarness((state, message) => {

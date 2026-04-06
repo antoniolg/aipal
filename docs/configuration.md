@@ -14,6 +14,9 @@ This bot stores a minimal JSON config with the values set by `/agent`.
     "codex": "gpt-5",
     "codex-app": "gpt-5.4-codex"
   },
+  "serviceTiers": {
+    "codex-app": "fast"
+  },
   "cronChatId": 123456789
 }
 ```
@@ -21,6 +24,7 @@ This bot stores a minimal JSON config with the values set by `/agent`.
 ## Fields
 - `agent`: which local agent backend to run (`codex`, `codex-app`, `claude`, `gemini`, or `opencode`).
 - `models` (optional): a map of agent id → model id, set via `/model` and cleared per-agent via `/model reset`. For `codex-app`, Aipal lists models through the app-server `model/list` RPC.
+- `serviceTiers` (optional): a map of agent id → service tier. Right now Aipal only uses this for `codex-app`, toggled via `/fast`, with values `fast` or `flex`.
 - `cronChatId` (optional): Telegram chat id used for cron job messages. You can get it from `/cron chatid`.
 
 `codex-app` thread bindings are still stored in the normal thread store keyed by `chatId:topicId:agentId`. Commands like `/resume` and `/status` operate on that existing per-topic binding. `/resume` hides sessions whose persisted `originator` is `aipal` by default; pass `--all` to include them.
