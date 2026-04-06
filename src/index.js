@@ -393,32 +393,32 @@ function formatThreadStatusMessage({
   threadState,
 }) {
   const lines = [
-    `<b>Agente activo:</b> ${escapeHtml(getAgentLabel(effectiveAgentId))}`,
-    `<b>Modelo de codex-app:</b> ${escapeHtml(globalModels[AGENT_CODEX_APP] || '(default)')}`,
-    `<b>Service tier de codex-app:</b> ${escapeHtml(globalServiceTiers[AGENT_CODEX_APP] || 'flex')}`,
+    `<b>Active agent:</b> ${escapeHtml(getAgentLabel(effectiveAgentId))}`,
+    `<b>codex-app model:</b> ${escapeHtml(globalModels[AGENT_CODEX_APP] || '(default)')}`,
+    `<b>codex-app service tier:</b> ${escapeHtml(globalServiceTiers[AGENT_CODEX_APP] || 'flex')}`,
     `<b>Reasoning:</b> ${escapeHtml(globalThinking || '(default)')}`,
     threadBinding
-      ? `<b>Thread de codex-app:</b> <code>${escapeHtml(threadBinding)}</code>`
-      : '<b>Thread de codex-app:</b> (sin binding)',
+      ? `<b>codex-app thread:</b> <code>${escapeHtml(threadBinding)}</code>`
+      : '<b>codex-app thread:</b> (no binding)',
   ];
 
   if (threadState?.title) {
-    lines.push(`<b>Titulo:</b> ${escapeHtml(threadState.title)}`);
+    lines.push(`<b>Title:</b> ${escapeHtml(threadState.title)}`);
   }
   if (threadState?.cwd) {
-    lines.push(`<b>Proyecto:</b> <code>${escapeHtml(threadState.cwd)}</code>`);
+    lines.push(`<b>Project:</b> <code>${escapeHtml(threadState.cwd)}</code>`);
   }
   if (threadState?.model) {
-    lines.push(`<b>Modelo del thread:</b> ${escapeHtml(threadState.model)}`);
+    lines.push(`<b>Thread model:</b> ${escapeHtml(threadState.model)}`);
   }
   if (threadState?.reasoningEffort) {
-    lines.push(`<b>Reasoning del thread:</b> ${escapeHtml(threadState.reasoningEffort)}`);
+    lines.push(`<b>Thread reasoning:</b> ${escapeHtml(threadState.reasoningEffort)}`);
   }
 
   lines.push(
     activeRunState?.active
-      ? `<b>Run activo:</b> si (${escapeHtml(activeRunState.lifecycleState || 'streaming')})`
-      : '<b>Run activo:</b> no'
+      ? `<b>Active run:</b> yes (${escapeHtml(activeRunState.lifecycleState || 'streaming')})`
+      : '<b>Active run:</b> no'
   );
 
   return lines.join('\n');
@@ -437,7 +437,7 @@ const resumeThreadsService = createResumeThreadsService({
       ? ` (${escapeHtml(entry.thread.title)})`
       : '';
     await ctx.editMessageText(
-      `Sesion de codex-app reanudada: <code>${escapeHtml(entry.thread.threadId)}</code>${titleSuffix}`,
+      `codex-app session resumed: <code>${escapeHtml(entry.thread.threadId)}</code>${titleSuffix}`,
       {
         disable_web_page_preview: true,
         parse_mode: 'HTML',
@@ -447,7 +447,7 @@ const resumeThreadsService = createResumeThreadsService({
     const effectiveAgentId = resolveEffectiveAgentId(entry.chatId, entry.topicId);
     if (effectiveAgentId !== AGENT_CODEX_APP) {
       await ctx.reply(
-        `El binding se ha guardado para <b>codex-app</b>. El agente activo en este topic sigue siendo <b>${escapeHtml(getAgentLabel(
+        `The binding has been saved for <b>codex-app</b>. The active agent in this topic is still <b>${escapeHtml(getAgentLabel(
           effectiveAgentId
         ))}</b>.`,
         {

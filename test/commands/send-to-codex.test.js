@@ -17,7 +17,7 @@ test('/send_to_codex uses the current topic codex-app thread and opens the proje
       assert.equal(agentId, 'codex-app');
       assert.equal(chatId, 1);
       assert.equal(topicId, 55);
-      return { threadId: 'thread-aipal-1', title: 'Sesion', cwd: '/tmp/aipal' };
+      return { threadId: 'thread-aipal-1', title: 'Session', cwd: '/tmp/aipal' };
     },
     getTopicId: (ctx) => ctx.message.message_thread_id,
     replyWithError: async () => {},
@@ -61,5 +61,5 @@ test('/send_to_codex explains when the current topic has no aipal codex-app thre
     },
   });
 
-  assert.match(replies[0], /Este topic no tiene ahora mismo una sesion de codex-app de aipal/);
+  assert.match(replies[0], /does not currently have an aipal codex-app session/i);
 });

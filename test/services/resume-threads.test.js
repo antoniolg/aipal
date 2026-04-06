@@ -28,11 +28,11 @@ test('formatThreadButton renders source, title, cwd and short id', () => {
     cwd: '/Users/antonio/Projects/antoniolg/aipal',
     sourceKind: 'cli',
     threadId: 'thread-1234567890abcdef',
-    title: 'Sesion buena',
+    title: 'Good session',
   });
 
   assert.match(text, /\[CLI\]/);
-  assert.match(text, /Sesion buena/);
+  assert.match(text, /Good session/);
   assert.match(text, /aipal/);
   assert.match(text, /#567890abcdef/);
 });
@@ -61,7 +61,7 @@ test('resume threads service sends picker and handles selections', async () => {
       effectiveAgentLabel: 'claude',
       query: 'demo',
       threads: [
-        { cwd: '/tmp/demo', threadId: 'thread-1', title: 'Sesion 1' },
+        { cwd: '/tmp/demo', threadId: 'thread-1', title: 'Session 1' },
       ],
     }
   );
@@ -92,7 +92,7 @@ test('resume threads service sends picker and handles selections', async () => {
   assert.equal(selections[0].chatId, 123);
   assert.equal(selections[0].thread.threadId, 'thread-1');
   assert.equal(edits.length, 1);
-  assert.match(answers[0], /Sesion reanudada/);
+  assert.match(answers[0], /Session resumed/);
 
   const staleHandled = await service.handleCallbackQuery({
     answerCbQuery: async (text) => {
@@ -101,7 +101,7 @@ test('resume threads service sends picker and handles selections', async () => {
     callbackQuery: { data: callbackData },
   });
   assert.equal(staleHandled, true);
-  assert.equal(answers[1], 'Esta seleccion ya no esta activa.');
+  assert.equal(answers[1], 'This selection is no longer active.');
 
   service.shutdown();
 });
@@ -128,17 +128,17 @@ test('resume threads service paginates long thread lists', async () => {
         cwd: `/tmp/project-${index + 1}`,
         sourceKind: index === 0 ? 'cli' : undefined,
         threadId: `thread-${index + 1}`,
-        title: `Sesion ${index + 1}`,
+        title: `Session ${index + 1}`,
       })),
     }
   );
 
   assert.equal(sentMessages.length, 1);
-  assert.match(sentMessages[0].text, /Mostrando 1-10/);
+  assert.match(sentMessages[0].text, /Showing 1-10/);
   assert.equal(sentMessages[0].options.reply_markup.inline_keyboard.length, 11);
   assert.equal(
     sentMessages[0].options.reply_markup.inline_keyboard.at(-1)[0].text,
-    'Siguiente'
+    'Next'
   );
 
   const nextCallback =
@@ -157,11 +157,11 @@ test('resume threads service paginates long thread lists', async () => {
 
   assert.equal(handled, true);
   assert.equal(edits.length, 1);
-  assert.match(edits[0].text, /Mostrando 11-12/);
+  assert.match(edits[0].text, /Showing 11-12/);
   assert.equal(edits[0].options.reply_markup.inline_keyboard.length, 3);
   assert.equal(
     edits[0].options.reply_markup.inline_keyboard.at(-1)[0].text,
-    'Anterior'
+    'Previous'
   );
   assert.equal(answers.length, 1);
   assert.equal(answers[0], '');

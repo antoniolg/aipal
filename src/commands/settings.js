@@ -223,7 +223,7 @@ function registerSettingsCommands(options) {
       getAgentOverride(ctx.chat.id, topicId) || getGlobalAgent();
 
     if (currentAgentId !== 'codex-app') {
-      await ctx.reply('/fast solo está soportado para codex-app.');
+      await ctx.reply('/fast is only supported for codex-app.');
       return;
     }
 
@@ -239,8 +239,8 @@ function registerSettingsCommands(options) {
 
       await ctx.reply(
         nextTier === 'fast'
-          ? 'codex-app ahora usa service tier fast.'
-          : 'codex-app ahora usa service tier flex.'
+          ? 'codex-app now uses service tier fast.'
+          : 'codex-app now uses service tier flex.'
       );
     } catch (err) {
       console.error(err);

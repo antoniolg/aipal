@@ -33,7 +33,7 @@ function formatPagedRange(total, page) {
 }
 
 function getProjectName(projectPath) {
-  return truncateMiddle(String(projectPath || '').split('/').filter(Boolean).pop(), 40) || 'Sin proyecto';
+  return truncateMiddle(String(projectPath || '').split('/').filter(Boolean).pop(), 40) || 'Unnamed project';
 }
 
 function createSendToCodexService(options) {
@@ -76,13 +76,13 @@ function createSendToCodexService(options) {
       const navRow = [];
       if (page > 0) {
         navRow.push({
-          text: 'Anterior',
+          text: 'Previous',
           callback_data: buildPageCallbackData(pageCallbackPrefix, pickerId, page - 1),
         });
       }
       if (page < totalPages - 1) {
         navRow.push({
-          text: 'Siguiente',
+          text: 'Next',
           callback_data: buildPageCallbackData(pageCallbackPrefix, pickerId, page + 1),
         });
       }
@@ -106,15 +106,15 @@ function createSendToCodexService(options) {
   function buildProjectPickerText(entry, page) {
     const { end, start } = formatPagedRange(entry.items.length, page);
     const lines = [
-      '<b>Enviar sesion a Codex App</b>',
+      '<b>Send session to Codex App</b>',
     ];
     if (entry.sourceThread.title) {
       lines.push('');
-      lines.push(`Titulo: ${escapeHtml(entry.sourceThread.title)}`);
+      lines.push(`Title: ${escapeHtml(entry.sourceThread.title)}`);
     }
-    lines.push('', `Elige un proyecto destino (${entry.items.length}):`);
+    lines.push('', `Choose a destination project (${entry.items.length}):`);
     if (entry.items.length > PAGE_SIZE) {
-      lines.push(`Mostrando ${start}-${end}.`);
+      lines.push(`Showing ${start}-${end}.`);
     }
     return lines.join('\n');
   }
@@ -143,7 +143,7 @@ function createSendToCodexService(options) {
   async function sendProjectPicker(ctx, sourceThread) {
     const projects = await listProjects();
     if (!Array.isArray(projects) || projects.length === 0) {
-      await ctx.reply('No se encontraron proyectos guardados en Codex App.');
+      await ctx.reply('No saved Codex App projects were found.');
       return;
     }
 
@@ -209,12 +209,12 @@ function createSendToCodexService(options) {
     const [, pickerId, pageText] = match;
     const entry = pickerStore.get(pickerId);
     if (!entry) {
-      await ctx.answerCbQuery('Este listado ya no esta activo.');
+      await ctx.answerCbQuery('This picker is no longer active.');
       return true;
     }
     const page = Number.parseInt(pageText, 10);
     if (!Number.isInteger(page) || page < 0) {
-      await ctx.answerCbQuery('Pagina no valida.');
+      await ctx.answerCbQuery('Invalid page.');
       return true;
     }
     const tokenById = registerSelectionTokens({
@@ -259,11 +259,11 @@ function createSendToCodexService(options) {
     if (!projectMatch) return false;
     const selection = pendingProjectSelections.get(projectMatch[1]);
     if (!selection) {
-      await ctx.answerCbQuery('Esta seleccion ya no esta activa.');
+      await ctx.answerCbQuery('This selection is no longer active.');
       return true;
     }
     if (!selection.sourceThread?.threadId) {
-      await ctx.answerCbQuery('Esta exportacion ya no esta activa.', {
+      await ctx.answerCbQuery('This export is no longer active.', {
         show_alert: true,
       });
       return true;
@@ -278,11 +278,11 @@ function createSendToCodexService(options) {
       });
       await ctx.editMessageText(
         [
-          '<b>Sesion enviada a Codex App</b>',
+          '<b>Session sent to Codex App</b>',
           '',
-          `<b>Thread original:</b> <code>${escapeHtml(result.sourceThreadId)}</code>`,
-          `<b>Thread fork:</b> <code>${escapeHtml(result.forkedThreadId)}</code>`,
-          `<b>Proyecto:</b> ${escapeHtml(result.projectLabel || getProjectName(result.projectPath))}`,
+          `<b>Source thread:</b> <code>${escapeHtml(result.sourceThreadId)}</code>`,
+          `<b>Forked thread:</b> <code>${escapeHtml(result.forkedThreadId)}</code>`,
+          `<b>Project:</b> ${escapeHtml(result.projectLabel || getProjectName(result.projectPath))}`,
         ].join('\n'),
         {
           disable_web_page_preview: true,
@@ -290,10 +290,10 @@ function createSendToCodexService(options) {
           reply_markup: { inline_keyboard: [] },
         }
       );
-      await ctx.answerCbQuery('Sesion enviada.');
+      await ctx.answerCbQuery('Session sent.');
     } catch (err) {
       logger.warn('Failed to send session to Codex App:', err);
-      await ctx.answerCbQuery('No se pudo enviar la sesion a Codex App.', {
+      await ctx.answerCbQuery('Failed to send the session to Codex App.', {
         show_alert: true,
       });
     }

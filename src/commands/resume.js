@@ -51,8 +51,8 @@ function registerResumeCommand(options) {
       if (!Array.isArray(threads) || threads.length === 0) {
         await ctx.reply(
           query
-            ? `No se encontraron sesiones de codex-app para "${query}".`
-            : 'No se encontraron sesiones previas de codex-app.'
+            ? `No codex-app sessions found for "${query}".`
+            : 'No previous codex-app sessions found.'
         );
         return;
       }
@@ -70,7 +70,7 @@ function registerResumeCommand(options) {
       });
     } catch (err) {
       console.error(err);
-      await replyWithError(ctx, 'No se pudieron listar las sesiones de codex-app.', err);
+      await replyWithError(ctx, 'Failed to list codex-app sessions.', err);
     }
   });
 
@@ -89,7 +89,7 @@ function registerResumeCommand(options) {
       });
     } catch (err) {
       console.error(err);
-      await replyWithError(ctx, 'No se pudo leer el estado del topic.', err);
+      await replyWithError(ctx, 'Failed to read topic status.', err);
     }
   });
 }

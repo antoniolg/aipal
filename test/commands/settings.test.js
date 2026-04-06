@@ -198,5 +198,5 @@ test('/fast rejects agents other than codex-app', async () => {
     },
   });
 
-  assert.match(replies[0], /solo está soportado para codex-app/i);
+  assert.match(replies[0], /only supported for codex-app/i);
 });

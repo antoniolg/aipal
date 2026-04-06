@@ -18,14 +18,14 @@ function registerSendToCodexCommand(options) {
       });
       if (!sourceThread?.threadId) {
         await ctx.reply(
-          'Este topic no tiene ahora mismo una sesion de codex-app de aipal para enviar a Codex App.'
+          'This topic does not currently have an aipal codex-app session to send to Codex App.'
         );
         return;
       }
       await sendToCodexPicker(ctx, sourceThread);
     } catch (err) {
       console.error(err);
-      await replyWithError(ctx, 'No se pudo preparar el envio a Codex App.', err);
+      await replyWithError(ctx, 'Failed to prepare the Codex App export.', err);
     }
   });
 }

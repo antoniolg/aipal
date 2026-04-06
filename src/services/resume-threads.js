@@ -29,7 +29,7 @@ function shortThreadId(threadId) {
 }
 
 function formatThreadButton(thread) {
-  const title = String(thread?.title || '').trim() || 'Sesion sin titulo';
+  const title = String(thread?.title || '').trim() || 'Untitled session';
   const cwd = truncateMiddle(thread?.cwd || '', 28);
   const threadId = shortThreadId(thread?.threadId || '');
   const sourceKind = String(thread?.sourceKind || '').trim().toLowerCase();
@@ -51,25 +51,25 @@ function formatThreadListMessage({
   threads,
 }) {
   const heading = query
-    ? `<b>Sesiones encontradas para codex-app</b>\nBusqueda: <code>${escapeHtml(query)}</code>`
-    : '<b>Sesiones recientes de codex-app</b>';
+    ? `<b>Matching codex-app sessions</b>\nQuery: <code>${escapeHtml(query)}</code>`
+    : '<b>Recent codex-app sessions</b>';
   const lines = [heading];
   if (effectiveAgentLabel && effectiveAgentLabel !== 'codex-app') {
     lines.push(
       '',
-      `Agente activo en este topic: <b>${escapeHtml(effectiveAgentLabel)}</b>`,
-      'El binding que elijas se guardara para <b>codex-app</b>.'
+      `Active agent in this topic: <b>${escapeHtml(effectiveAgentLabel)}</b>`,
+      'The selection you make will be saved for <b>codex-app</b>.'
     );
   }
   if (currentBinding) {
-    lines.push('', `Binding actual de codex-app: <code>${escapeHtml(currentBinding)}</code>`);
+    lines.push('', `Current codex-app binding: <code>${escapeHtml(currentBinding)}</code>`);
   }
   const total = threads.length;
   const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const end = Math.min(total, (page + 1) * PAGE_SIZE);
-  lines.push('', `Elige una sesion (${total}):`);
+  lines.push('', `Choose a session (${total}):`);
   if (total > PAGE_SIZE) {
-    lines.push(`Mostrando ${start}-${end}.`);
+    lines.push(`Showing ${start}-${end}.`);
   }
   return lines.join('\n');
 }
@@ -104,13 +104,13 @@ function createResumeThreadsService(options) {
       const navRow = [];
       if (page > 0) {
         navRow.push({
-          text: 'Anterior',
+          text: 'Previous',
           callback_data: buildPageCallbackData(pickerId, page - 1),
         });
       }
       if (page < totalPages - 1) {
         navRow.push({
-          text: 'Siguiente',
+          text: 'Next',
           callback_data: buildPageCallbackData(pickerId, page + 1),
         });
       }
@@ -195,7 +195,7 @@ function createResumeThreadsService(options) {
       const [, pickerId, pageText] = pageMatch;
       const entry = pendingPickers.get(pickerId);
       if (!entry) {
-        await ctx.answerCbQuery('Este listado ya no esta activo.', {
+        await ctx.answerCbQuery('This picker is no longer active.', {
           show_alert: false,
         });
         return true;
@@ -203,7 +203,7 @@ function createResumeThreadsService(options) {
 
       const page = Number.parseInt(pageText, 10);
       if (!Number.isInteger(page) || page < 0) {
-        await ctx.answerCbQuery('Pagina no valida.', {
+        await ctx.answerCbQuery('Invalid page.', {
           show_alert: false,
         });
         return true;
@@ -233,7 +233,7 @@ function createResumeThreadsService(options) {
     const [, token] = match;
     const entry = pendingSelections.get(token);
     if (!entry) {
-      await ctx.answerCbQuery('Esta seleccion ya no esta activa.', {
+      await ctx.answerCbQuery('This selection is no longer active.', {
         show_alert: false,
       });
       return true;
@@ -243,10 +243,10 @@ function createResumeThreadsService(options) {
     try {
       await Promise.resolve(onSelectThread(entry, ctx));
       const label = String(entry.thread.title || shortThreadId(entry.thread.threadId));
-      await ctx.answerCbQuery(`Sesion reanudada: ${label}`);
+      await ctx.answerCbQuery(`Session resumed: ${label}`);
     } catch (err) {
       logger.warn('Failed to handle resume selection:', err);
-      await ctx.answerCbQuery('No se pudo reanudar esa sesion.', {
+      await ctx.answerCbQuery('Failed to resume that session.', {
         show_alert: true,
       });
     }

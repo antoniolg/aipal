@@ -52,7 +52,7 @@ test('/resume lists codex-app threads with picker buttons', async () => {
       assert.equal(agentId, 'codex-app');
       assert.equal(includeAipal, false);
       assert.equal(query, 'demo');
-      return [{ threadId: 'thread-1', title: 'Sesion demo', cwd: '/tmp/demo' }];
+      return [{ threadId: 'thread-1', title: 'Demo session', cwd: '/tmp/demo' }];
     },
     sendResumeThreadPicker: async (_ctx, payload) => {
       pickerCalls.push(payload);
@@ -82,7 +82,7 @@ test('/resume forwards --all when requested', async () => {
     listResumeThreads: async ({ includeAipal, query }) => {
       assert.equal(includeAipal, true);
       assert.equal(query, 'demo');
-      return [{ threadId: 'thread-1', title: 'Sesion demo', cwd: '/tmp/demo' }];
+      return [{ threadId: 'thread-1', title: 'Demo session', cwd: '/tmp/demo' }];
     },
   }));
 
@@ -108,7 +108,7 @@ test('/resume explains when there are no threads', async () => {
     },
   });
 
-  assert.match(replies[0], /No se encontraron sesiones/);
+  assert.match(replies[0], /No .*codex-app sessions found/i);
 });
 
 test('/status reports effective agent and codex-app binding details', async () => {
@@ -121,7 +121,7 @@ test('/status reports effective agent and codex-app binding details', async () =
       assert.equal(chatId, 9);
       assert.equal(topicId, 333);
       assert.equal(effectiveAgentId, 'claude');
-      return '<b>Agente activo:</b> claude';
+      return '<b>Active agent:</b> claude';
     },
     resolveEffectiveAgentId: () => 'claude',
   }));

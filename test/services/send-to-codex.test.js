@@ -47,7 +47,7 @@ test('send to codex service shows project picker for the current session and con
       chat: { id: 123 },
       message: { message_thread_id: 77 },
     },
-    { threadId: 'thread-aipal-1', title: 'Sesion 1', cwd: '/tmp/aipal-1' }
+    { threadId: 'thread-aipal-1', title: 'Session 1', cwd: '/tmp/aipal-1' }
   );
 
   assert.equal(sentMessages.length, 1);
@@ -69,9 +69,9 @@ test('send to codex service shows project picker for the current session and con
   assert.equal(calls[0].sourceThread.threadId, 'thread-aipal-1');
   assert.equal(calls[0].project.path, '/Users/antonio/Projects/antoniolg/aipal');
   assert.equal(edits.length, 1);
-  assert.match(edits[0].text, /Sesion enviada a Codex App/);
+  assert.match(edits[0].text, /Session sent to Codex App/);
   assert.match(edits[0].text, /thread-forked/);
-  assert.equal(answers.at(-1), 'Sesion enviada.');
+  assert.equal(answers.at(-1), 'Session sent.');
 
   service.shutdown();
 });
@@ -98,11 +98,11 @@ test('send to codex service paginates project picker results', async () => {
       chat: { id: 123 },
       message: { message_thread_id: 77 },
     },
-    { threadId: 'thread-aipal-1', title: 'Sesion 1', cwd: '/tmp/aipal-1' }
+    { threadId: 'thread-aipal-1', title: 'Session 1', cwd: '/tmp/aipal-1' }
   );
 
   assert.equal(sentMessages.length, 1);
-  assert.match(sentMessages[0].text, /Mostrando 1-10/);
+  assert.match(sentMessages[0].text, /Showing 1-10/);
   const nextCallback =
     sentMessages[0].options.reply_markup.inline_keyboard.at(-1)[0].callback_data;
   assert.match(nextCallback, /^send_to_codex_project_page:/);
@@ -119,10 +119,10 @@ test('send to codex service paginates project picker results', async () => {
 
   assert.equal(handled, true);
   assert.equal(edits.length, 1);
-  assert.match(edits[0].text, /Mostrando 11-11/);
+  assert.match(edits[0].text, /Showing 11-11/);
   assert.equal(
     edits[0].options.reply_markup.inline_keyboard.at(-1)[0].text,
-    'Anterior'
+    'Previous'
   );
   assert.equal(answers.at(-1), '');
 
