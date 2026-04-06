@@ -260,7 +260,12 @@ const memoryService = createMemoryService({
     memoryEventsSinceCurate = value;
   },
 });
-const { buildBootstrapContext, captureMemoryEvent, extractMemoryText } = memoryService;
+const {
+  buildBootstrapContext,
+  buildCodexAppThreadInstructions,
+  captureMemoryEvent,
+  extractMemoryText,
+} = memoryService;
 
 const approvalService = createApprovalService({ bot });
 const codexAppServerClient = createCodexAppServerClient({
@@ -296,9 +301,11 @@ const agentRunner = createAgentRunner({
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
     }
+    const developerInstructions = await buildCodexAppThreadInstructions();
     return codexAppServerClient.runChatTurn({
       approvalPolicy: 'on-request',
       cwd: options.cwd,
+      developerInstructions: developerInstructions || undefined,
       effort: options.effort,
       includeAgentDeltas: options.chatId > 0,
       input: buildCodexAppInputs(options.prompt, options.imagePaths),
@@ -323,9 +330,11 @@ const agentRunner = createAgentRunner({
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
     }
+    const developerInstructions = await buildCodexAppThreadInstructions();
     return codexAppServerClient.runOneShot({
       approvalPolicy: 'on-request',
       cwd: process.cwd(),
+      developerInstructions: developerInstructions || undefined,
       effort: options.effort,
       input: buildCodexAppInputs(options.prompt, []),
       model: options.model,

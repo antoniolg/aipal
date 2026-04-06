@@ -302,7 +302,11 @@ function createAgentRunner(options) {
       });
     }
     if (!threadId) {
-      const bootstrap = await buildBootstrapContext({ threadKey });
+      const bootstrap = await buildBootstrapContext({
+        includeSoul: !(agent.backend === 'app-server' && agent.id === 'codex-app'),
+        includeTools: !(agent.backend === 'app-server' && agent.id === 'codex-app'),
+        threadKey,
+      });
       promptWithContext = promptWithContext
         ? `${bootstrap}\n\n${promptWithContext}`
         : bootstrap;

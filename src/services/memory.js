@@ -61,7 +61,13 @@ function createMemoryService(options) {
   }
 
   async function buildBootstrapContext(contextOptions = {}) {
-    const { threadKey } = contextOptions;
+    const {
+      includeMemory = true,
+      includeSoul = true,
+      includeThreadMemory = true,
+      includeTools = true,
+      threadKey,
+    } = contextOptions;
     const soul = await readSoul();
     const tools = await readTools();
     const memory = await readMemory();
@@ -72,6 +78,36 @@ function createMemoryService(options) {
       `Tools file: ${toolsPath}`,
       `Memory file: ${memoryPath}`,
     ];
+    if (includeSoul && soul.exists && soul.content) {
+      lines.push('Soul (soul.md):');
+      lines.push(soul.content);
+      lines.push('End of soul.');
+    }
+    if (includeTools && tools.exists && tools.content) {
+      lines.push('Tools (tools.md):');
+      lines.push(tools.content);
+      lines.push('End of tools.');
+    }
+    if (includeMemory && memory.exists && memory.content) {
+      lines.push('Memory (memory.md):');
+      lines.push(memory.content);
+      lines.push('End of memory.');
+    }
+    if (includeThreadMemory && threadKey) {
+      const threadBootstrap = await buildThreadBootstrap(threadKey);
+      if (threadBootstrap) {
+        lines.push(threadBootstrap);
+        lines.push('End of thread memory.');
+      }
+    }
+    return lines.join('\n');
+  }
+
+  async function buildCodexAppThreadInstructions() {
+    const soul = await readSoul();
+    const tools = await readTools();
+    const lines = [];
+
     if (soul.exists && soul.content) {
       lines.push('Soul (soul.md):');
       lines.push(soul.content);
@@ -82,23 +118,13 @@ function createMemoryService(options) {
       lines.push(tools.content);
       lines.push('End of tools.');
     }
-    if (memory.exists && memory.content) {
-      lines.push('Memory (memory.md):');
-      lines.push(memory.content);
-      lines.push('End of memory.');
-    }
-    if (threadKey) {
-      const threadBootstrap = await buildThreadBootstrap(threadKey);
-      if (threadBootstrap) {
-        lines.push(threadBootstrap);
-        lines.push('End of thread memory.');
-      }
-    }
-    return lines.join('\n');
+
+    return lines.join('\n').trim();
   }
 
   return {
     buildBootstrapContext,
+    buildCodexAppThreadInstructions,
     captureMemoryEvent,
     extractMemoryText,
     maybeAutoCurateMemory,

@@ -213,6 +213,54 @@ test('codex app server client sends default personality on thread/start and turn
   await client.shutdown();
 });
 
+test('codex app server client sends developer instructions on thread/start only', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: { serverInfo: { name: 'codex-app-server' } } });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-instructions' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-instructions' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-instructions',
+            turn: { id: 'turn-instructions', status: 'completed' },
+          },
+        });
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.runChatTurn({
+    cwd: '/tmp/demo',
+    developerInstructions: 'ALWAYS FOLLOW THESE RULES',
+    input: [{ type: 'text', text: 'hola' }],
+  });
+
+  assert.equal(
+    harness.spawns[0].messages[2].params.developerInstructions,
+    'ALWAYS FOLLOW THESE RULES'
+  );
+  assert.equal(
+    Object.hasOwn(harness.spawns[0].messages[3].params, 'developerInstructions'),
+    false
+  );
+
+  await client.shutdown();
+});
+
 test('codex app server client sends default personality on thread/resume', async () => {
   const logger = { warn() {} };
   const harness = createSpawnHarness((state, message) => {

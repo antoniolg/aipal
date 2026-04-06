@@ -292,6 +292,41 @@ test('runAgentForChat uses the session-backed codex-app backend and persists thr
   assert.equal(persistedThreadSnapshots.length, 1);
 });
 
+test('runAgentForChat skips soul/tools bootstrap in codex-app prompts for new threads', async () => {
+  const bootstrapCalls = [];
+  const calls = [];
+
+  const { runner } = buildRunner({
+    buildBootstrapContext: async (options = {}) => {
+      bootstrapCalls.push(options);
+      return [
+        options.includeSoul === false ? 'NO_SOUL' : 'WITH_SOUL',
+        options.includeTools === false ? 'NO_TOOLS' : 'WITH_TOOLS',
+      ].join(' ');
+    },
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    runSessionBackedChatTurn: async (options) => {
+      calls.push(options);
+      return {
+        text: 'respuesta codex-app',
+        threadId: 'app-thread-bootstrap',
+        turnId: 'turn-bootstrap',
+      };
+    },
+  });
+
+  await runner.runAgentForChat(71, 'hola', {
+    agentId: 'codex-app',
+  });
+
+  assert.equal(bootstrapCalls.length, 1);
+  assert.equal(bootstrapCalls[0].includeSoul, false);
+  assert.equal(bootstrapCalls[0].includeTools, false);
+  assert.match(calls[0].prompt, /NO_SOUL NO_TOOLS/);
+});
+
 test('runAgentForChat reuses a resumed codex-app thread binding', async () => {
   const calls = [];
   const { runner, threads } = buildRunner({
