@@ -18,6 +18,7 @@ function registerSettingsCommands(options) {
     getTopicId,
     isKnownAgent,
     listAgentModels,
+    listAgentReasoningEfforts,
     isModelResetCommand,
     normalizeAgent,
     normalizeTopicId,
@@ -39,16 +40,33 @@ function registerSettingsCommands(options) {
 
   bot.command('thinking', async (ctx) => {
     const value = extractCommandValue(ctx.message.text);
+    const topicId = getTopicId(ctx);
+    const currentAgentId =
+      getAgentOverride(ctx.chat.id, topicId) || getGlobalAgent();
     if (!value) {
-      if (getGlobalThinking()) {
-        ctx.reply(`Current reasoning effort: ${getGlobalThinking()}`);
-      } else {
-        ctx.reply('No reasoning effort set. Use /thinking <level>.');
+      let msg = getGlobalThinking()
+        ? `Current reasoning effort: ${getGlobalThinking()}`
+        : 'No reasoning effort set. Use /thinking <level>.';
+
+      if (currentAgentId === 'codex-app' && typeof listAgentReasoningEfforts === 'function') {
+        try {
+          const efforts = await listAgentReasoningEfforts(
+            currentAgentId,
+            getGlobalModels()[currentAgentId] || getAgent(currentAgentId).defaultModel || ''
+          );
+          if (efforts) {
+            msg += `\n\nAvailable reasoning efforts:\n${efforts}`;
+          }
+        } catch (err) {
+          msg += `\n\n(Failed to list reasoning efforts: ${err.message})`;
+        }
       }
+      ctx.reply(msg);
       return;
     }
     try {
       setGlobalThinking(value);
+      await updateConfig({ thinking: getGlobalThinking() });
       ctx.reply(`Reasoning effort set to ${value}.`);
     } catch (err) {
       console.error(err);

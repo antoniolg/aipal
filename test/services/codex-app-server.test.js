@@ -472,6 +472,49 @@ test('codex app server client lists threads and reads thread state', async () =>
   await client.shutdown();
 });
 
+test('codex app server client keeps supportedReasoningEfforts metadata from model/list', async () => {
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'model/list') {
+      state.send({
+        id: message.id,
+        result: {
+          data: [
+            {
+              id: 'gpt-5.4-mini',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'low' },
+                { reasoningEffort: 'medium' },
+                { reasoningEffort: 'high' },
+              ],
+            },
+          ],
+        },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const models = await client.listModels();
+  assert.equal(models.length, 1);
+  assert.equal(models[0].id, 'gpt-5.4-mini');
+  assert.deepEqual(models[0].supportedReasoningEfforts, [
+    { reasoningEffort: 'low' },
+    { reasoningEffort: 'medium' },
+    { reasoningEffort: 'high' },
+  ]);
+
+  await client.shutdown();
+});
+
 test('codex app server client sets thread names', async () => {
   let renamePayload = null;
   const logger = { warn() {} };

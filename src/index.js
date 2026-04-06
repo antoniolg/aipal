@@ -589,6 +589,7 @@ async function hydrateGlobalSettings() {
   if (config.agent) globalAgent = normalizeAgent(config.agent);
   if (config.models) globalModels = { ...config.models };
   if (config.serviceTiers) globalServiceTiers = { ...config.serviceTiers };
+  if (config.thinking) globalThinking = config.thinking;
   return config;
 }
 
@@ -644,12 +645,61 @@ registerCommands({
     const models = await codexAppServerClient.listModels();
     return models
       .map((entry) => {
-        const efforts = Array.isArray(entry.effortOptions)
-          ? ` [${entry.effortOptions.join(', ')}]`
+        const effortOptions = Array.isArray(entry.effortOptions)
+          ? entry.effortOptions
+          : Array.isArray(entry.supportedReasoningEfforts)
+            ? entry.supportedReasoningEfforts
+              .map((item) =>
+                typeof item === 'string'
+                  ? item
+                  : String(item?.reasoningEffort || '').trim()
+              )
+              .filter(Boolean)
+            : [];
+        const efforts = effortOptions.length > 0
+          ? ` [${effortOptions.join(', ')}]`
           : '';
         return `${entry.id}${efforts}`;
       })
       .join('\n');
+  },
+  listAgentReasoningEfforts: async (agentId, modelId) => {
+    if (agentId !== AGENT_CODEX_APP) return '';
+    const models = await codexAppServerClient.listModels();
+    const normalizedModelId = String(modelId || '').trim();
+    const match = normalizedModelId
+      ? models.find((entry) => String(entry.id || '').trim() === normalizedModelId)
+      : null;
+    const effortOptions = Array.isArray(match?.effortOptions)
+      ? match.effortOptions
+      : Array.isArray(match?.supportedReasoningEfforts)
+        ? match.supportedReasoningEfforts
+          .map((item) =>
+            typeof item === 'string'
+              ? item
+              : String(item?.reasoningEffort || '').trim()
+          )
+          .filter(Boolean)
+        : null;
+    if (Array.isArray(effortOptions) && effortOptions.length > 0) {
+      return effortOptions.join('\n');
+    }
+    const merged = [...new Set(
+      models.flatMap((entry) => {
+        if (Array.isArray(entry.effortOptions)) return entry.effortOptions;
+        if (Array.isArray(entry.supportedReasoningEfforts)) {
+          return entry.supportedReasoningEfforts
+            .map((item) =>
+              typeof item === 'string'
+                ? item
+                : String(item?.reasoningEffort || '').trim()
+            )
+            .filter(Boolean);
+        }
+        return [];
+      })
+    )];
+    return merged.join('\n');
   },
   listResumeThreads: async ({ agentId, includeAipal, query }) => {
     if (agentId !== AGENT_CODEX_APP) return [];

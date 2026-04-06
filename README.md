@@ -45,7 +45,7 @@ At startup, Aipal also syncs the built-in bot commands to Telegram automatically
 - Images: send a photo or image file (caption becomes the prompt)
 - Documents: send a file (caption becomes the prompt)
 - `/reset`: clear the current agent session (drops the stored session id for this agent) and trigger memory curation
-- `/thinking <level>`: set reasoning effort (mapped to `model_reasoning_effort`) for this session
+- `/thinking [level]`: view/set reasoning effort for the current session. For `codex-app`, calling it without args also lists the reasoning efforts exposed by the app-server for the current model.
 - `/agent <name>`: set the agent backend
     - In root: sets global agent (persisted in `config.json`)
     - In a topic: sets an override for this topic (persisted in `agent-overrides.json`)
