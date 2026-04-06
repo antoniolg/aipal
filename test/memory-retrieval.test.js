@@ -127,3 +127,39 @@ test('searchMemory includes global context when available', async () => {
   assert.ok(hits.length >= 2);
   assert.ok(hits.some((hit) => hit.scope === 'global'));
 });
+
+test('searchMemory can restrict hits to the active thread', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-retrieval-'));
+  const { memoryStore, retrieval } = loadModules(dir);
+
+  await memoryStore.appendMemoryEvent({
+    threadKey: '10:ctx:cron:daily-content-curation:codex',
+    chatId: '10',
+    topicId: '1575',
+    agentId: 'codex',
+    role: 'assistant',
+    text: 'Digest con noticias de MCP y agentes',
+  });
+  await memoryStore.appendMemoryEvent({
+    threadKey: '10:ctx:cron:weekly-social-strategy:codex',
+    chatId: '10',
+    topicId: '1575',
+    agentId: 'codex',
+    role: 'assistant',
+    text: 'Plan semanal con tesis y hooks para X',
+  });
+
+  const hits = await retrieval.searchMemory({
+    query: 'MCP agentes hooks',
+    chatId: '10',
+    topicId: '1575',
+    agentId: 'codex',
+    threadKey: '10:ctx:cron:daily-content-curation:codex',
+    restrictToThread: true,
+    limit: 5,
+  });
+
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].text, /Digest con noticias/i);
+  assert.equal(hits[0].scope, 'same-thread');
+});

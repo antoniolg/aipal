@@ -36,8 +36,8 @@ function createAgentRunner(options) {
   const activeRuns = new Set();
   const activeRunsByKey = new Map();
 
-  function buildActiveRunKey(chatId, topicId, agentId) {
-    return `${chatId}:${topicId || 'root'}:${agentId}`;
+  function buildActiveRunKey(chatId, topicId, agentId, contextKey) {
+    return `${chatId}:${contextKey || topicId || 'root'}:${agentId}`;
   }
 
   function trackActiveRun(run) {
@@ -262,10 +262,12 @@ function createAgentRunner(options) {
   async function runAgentForChat(chatId, prompt, runOptions = {}) {
     const {
       topicId,
+      contextKey,
       agentId: overrideAgentId,
       imagePaths,
       scriptContext,
       documentPaths,
+      restrictMemoryToThread = false,
       onFinalResponse,
       onProgressUpdate,
       onSettled,
@@ -283,7 +285,8 @@ function createAgentRunner(options) {
       threads,
       chatId,
       topicId,
-      effectiveAgentId
+      effectiveAgentId,
+      contextKey
     );
     const turnCount = (threadTurns.get(threadKey) || 0) + 1;
     threadTurns.set(threadKey, turnCount);
@@ -316,6 +319,8 @@ function createAgentRunner(options) {
       chatId,
       topicId,
       agentId: effectiveAgentId,
+      threadKey,
+      restrictToThread: restrictMemoryToThread,
       limit: memoryRetrievalLimit,
     });
     if (retrievalContext) {
@@ -373,7 +378,7 @@ function createAgentRunner(options) {
       `Agent start chat=${chatId} topic=${topicId || 'root'} agent=${agent.id} thread=${threadId || 'new'}`
     );
     const run = {
-      activeKey: buildActiveRunKey(chatId, topicId, effectiveAgentId),
+      activeKey: buildActiveRunKey(chatId, topicId, effectiveAgentId, contextKey),
       child: null,
       droppedProgressUpdates: 0,
       finalEmitted: false,

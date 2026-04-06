@@ -111,6 +111,8 @@ function toDisplayTimestamp(value) {
 }
 
 function scoreScope(event, target) {
+  const eventThreadKey = String(event.threadKey || '');
+  const targetThreadKey = String(target.threadKey || '');
   const eventChat = String(event.chatId || '');
   const eventTopic = normalizeTopicId(event.topicId);
   const eventAgent = String(event.agentId || '');
@@ -119,6 +121,9 @@ function scoreScope(event, target) {
   const targetTopic = normalizeTopicId(target.topicId);
   const targetAgent = String(target.agentId || '');
 
+  if (eventThreadKey && targetThreadKey && eventThreadKey === targetThreadKey) {
+    return { value: 6, label: 'same-thread' };
+  }
   if (eventChat === targetChat && eventTopic === targetTopic && eventAgent === targetAgent) {
     return { value: 6, label: 'same-thread' };
   }
@@ -216,9 +221,16 @@ async function searchMemory(options = {}) {
   });
   if (!all.length) return [];
 
+  const restrictToThread = Boolean(options.restrictToThread);
+  const targetThreadKey = String(options.threadKey || '');
+  const filtered = restrictToThread && targetThreadKey
+    ? all.filter((event) => String(event.threadKey || '') === targetThreadKey)
+    : all;
+  if (!filtered.length) return [];
+
   const nowMs = Date.now();
   const scored = [];
-  for (const event of all) {
+  for (const event of filtered) {
     const scope = scoreScope(event, options);
     const lexical = scoreLexical(event.text, queryTokens, query);
     if (queryTokens.length > 0 && lexical === 0 && scope.value < 2) continue;

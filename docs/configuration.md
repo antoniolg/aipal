@@ -64,8 +64,10 @@ Every conversation is captured automatically into per-thread JSONL files:
 - `~/.config/aipal/memory/threads/*.jsonl`
 - If `XDG_CONFIG_HOME` is set, it uses `$XDG_CONFIG_HOME/aipal/memory/threads/*.jsonl`
 
-The key format is `chatId:topicId:agentId`, so multiple agents can write memory in parallel without sharing raw logs.
+The key format is usually `chatId:topicId:agentId`, so multiple agents can write memory in parallel without sharing raw logs.
 That separation also means `codex` and `codex-app` keep distinct sessions and retrieval histories even inside the same chat/topic.
+
+Cron jobs can opt into an internal context key while still replying in the same Telegram topic. In that mode, the raw agent thread and `Recent thread memory` stay isolated per cron job (for example `chatId:ctx:cron:jobId:agentId`), while the final assistant message can still be mirrored back into the shared topic memory so follow-up replies keep their visible continuity.
 
 An SQLite index is also maintained automatically:
 - `~/.config/aipal/memory/index.sqlite`
@@ -80,7 +82,7 @@ Environment knobs:
 - `AIPAL_MEMORY_CURATE_EVERY`: auto-curate memory after N new captured events (default: `20`).
 - `AIPAL_MEMORY_RETRIEVAL_LIMIT`: maximum number of retrieved memory lines injected per request (default: `8`).
 
-Retrieval currently mixes scopes (`same-thread`, `same-topic`, `same-chat`, `global`) so prompts can include both local continuity and useful cross-topic memory when available.
+Retrieval currently mixes scopes (`same-thread`, `same-topic`, `same-chat`, `global`) so prompts can include both local continuity and useful cross-topic memory when available. When a caller enables thread-restricted retrieval, only hits from the active internal thread are injected.
 
 ## Soul file (optional)
 If `soul.md` exists alongside `config.json`, its contents are injected first during bootstrap (before `tools.md` and `memory.md`).

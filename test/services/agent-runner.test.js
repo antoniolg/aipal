@@ -76,6 +76,53 @@ test('runAgentForChat passes the resolved model into buildPrompt before command 
   assert.equal(buildPromptCalls[0].options.model, 'gpt-5.4');
 });
 
+test('runAgentForChat isolates thread and retrieval when contextKey is provided', async () => {
+  const resolveCalls = [];
+  const retrievalCalls = [];
+  const bootstrapCalls = [];
+
+  const { runner } = buildRunner({
+    buildBootstrapContext: async ({ threadKey }) => {
+      bootstrapCalls.push(threadKey);
+      return 'bootstrap';
+    },
+    buildMemoryRetrievalContext: async (options) => {
+      retrievalCalls.push(options);
+      return '';
+    },
+    resolveThreadId: (_threads, chatId, topicId, agentId, contextKey) => {
+      resolveCalls.push({ chatId, topicId, agentId, contextKey });
+      return {
+        threadKey: `${chatId}:ctx:${contextKey}:${agentId}`,
+        threadId: undefined,
+        migrated: false,
+      };
+    },
+  });
+
+  await runner.runAgentForChat(41, 'hola', {
+    topicId: 1575,
+    contextKey: 'cron:daily-content-curation',
+    restrictMemoryToThread: true,
+  });
+
+  assert.deepEqual(resolveCalls, [
+    {
+      chatId: 41,
+      topicId: 1575,
+      agentId: 'codex',
+      contextKey: 'cron:daily-content-curation',
+    },
+  ]);
+  assert.deepEqual(bootstrapCalls, ['41:ctx:cron:daily-content-curation:codex']);
+  assert.equal(retrievalCalls.length, 1);
+  assert.equal(
+    retrievalCalls[0].threadKey,
+    '41:ctx:cron:daily-content-curation:codex'
+  );
+  assert.equal(retrievalCalls[0].restrictToThread, true);
+});
+
 test('runAgentForChat streams codex final response before process exit', async () => {
   const order = [];
   const progressUpdates = [];

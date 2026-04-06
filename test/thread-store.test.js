@@ -4,7 +4,9 @@ const {
   normalizeTopicId,
   buildTopicKey,
   buildThreadKey,
+  normalizeContextKey,
   resolveThreadId,
+  resolveThreadTopicId,
   clearThreadForAgent,
 } = require('../src/thread-store');
 
@@ -23,6 +25,19 @@ test('buildTopicKey', () => {
 
 test('buildThreadKey', () => {
   assert.strictEqual(buildThreadKey(111, 222, 'claude'), '111:222:claude');
+  assert.strictEqual(
+    buildThreadKey(111, 222, 'claude', 'cron:daily-content-curation'),
+    '111:ctx:cron:daily-content-curation:claude'
+  );
+});
+
+test('resolveThreadTopicId', () => {
+  assert.strictEqual(resolveThreadTopicId(222), '222');
+  assert.strictEqual(
+    resolveThreadTopicId(222, 'cron:daily-content-curation'),
+    'ctx:cron:daily-content-curation'
+  );
+  assert.strictEqual(normalizeContextKey(' cron:job '), 'ctx:cron:job');
 });
 
 test('resolveThreadId - direct hit', () => {
@@ -54,6 +69,20 @@ test('resolveThreadId - no migration for non-root topics', () => {
   const threads = new Map([['111:claude', 'session-abc']]);
   const result = resolveThreadId(threads, 111, 'topic1', 'claude');
   assert.strictEqual(result.threadId, undefined);
+  assert.strictEqual(result.migrated, false);
+});
+
+test('resolveThreadId - no migration for context threads', () => {
+  const threads = new Map([['111:222:claude', 'session-abc']]);
+  const result = resolveThreadId(
+    threads,
+    111,
+    222,
+    'claude',
+    'cron:daily-content-curation'
+  );
+  assert.strictEqual(result.threadId, undefined);
+  assert.strictEqual(result.threadKey, '111:ctx:cron:daily-content-curation:claude');
   assert.strictEqual(result.migrated, false);
 });
 

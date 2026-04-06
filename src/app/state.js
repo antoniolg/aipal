@@ -1,4 +1,4 @@
-const { buildThreadKey, normalizeTopicId } = require('../thread-store');
+const { buildThreadKey } = require('../thread-store');
 
 function createAppState({ defaultAgent }) {
   return {
@@ -47,8 +47,8 @@ function resolveEffectiveAgentId(state, getAgentOverride, chatId, topicId, overr
   );
 }
 
-function buildMemoryThreadKey(chatId, topicId, agentId) {
-  return buildThreadKey(chatId, normalizeTopicId(topicId), agentId);
+function buildMemoryThreadKey(chatId, topicId, agentId, contextKey) {
+  return buildThreadKey(chatId, topicId, agentId, contextKey);
 }
 
 module.exports = {

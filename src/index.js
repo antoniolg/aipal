@@ -571,8 +571,8 @@ function resolveEffectiveAgentId(chatId, topicId, overrideAgentId) {
   );
 }
 
-function buildMemoryThreadKey(chatId, topicId, agentId) {
-  return buildThreadKey(chatId, normalizeTopicId(topicId), agentId);
+function buildMemoryThreadKey(chatId, topicId, agentId, contextKey) {
+  return buildThreadKey(chatId, topicId, agentId, contextKey);
 }
 
 function escapeHtml(value) {

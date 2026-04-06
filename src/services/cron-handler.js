@@ -25,7 +25,18 @@ function createCronHandler(options) {
       scheduledAt,
     } = triggerOptions;
     const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId, agent);
-    const memoryThreadKey = buildMemoryThreadKey(chatId, topicId, effectiveAgentId);
+    const contextKey = jobId ? `cron:${jobId}` : '';
+    const memoryThreadKey = buildMemoryThreadKey(
+      chatId,
+      topicId,
+      effectiveAgentId,
+      contextKey
+    );
+    const sharedMemoryThreadKey = buildMemoryThreadKey(
+      chatId,
+      topicId,
+      effectiveAgentId
+    );
     const topicKey = buildTopicKey
       ? buildTopicKey(chatId, topicId)
       : `${String(chatId)}:${topicId ?? 'root'}`;
@@ -52,7 +63,9 @@ function createCronHandler(options) {
         });
         const response = await runAgentForChat(chatId, prompt, {
           agentId: agent,
+          contextKey,
           topicId,
+          restrictMemoryToThread: true,
           onFinalResponse: async (partialResponse) => {
             const matchedToken = silentTokens.find((t) =>
               String(partialResponse || '').includes(t)
@@ -65,6 +78,7 @@ function createCronHandler(options) {
             });
           },
         });
+        const responseText = extractMemoryText(response);
         await captureMemoryEvent({
           threadKey: memoryThreadKey,
           chatId,
@@ -72,12 +86,23 @@ function createCronHandler(options) {
           agentId: effectiveAgentId,
           role: 'assistant',
           kind: 'text',
-          text: extractMemoryText(response),
+          text: responseText,
         });
         const matchedToken = silentTokens.find((t) => response.includes(t));
         if (matchedToken) {
           console.info(`Cron job ${jobId}: ${matchedToken} (silent)`);
           return { ok: true, response, silent: true };
+        }
+        if (sharedMemoryThreadKey !== memoryThreadKey) {
+          await captureMemoryEvent({
+            threadKey: sharedMemoryThreadKey,
+            chatId,
+            topicId,
+            agentId: effectiveAgentId,
+            role: 'assistant',
+            kind: 'text',
+            text: responseText,
+          });
         }
         if (!responseSent) {
           await sendResponseToChat(chatId, response, {
