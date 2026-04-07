@@ -83,6 +83,7 @@ const {
 
 const { ScriptManager } = require('./script-manager');
 const { prefixTextWithTimestamp, DEFAULT_TIME_ZONE } = require('./time-utils');
+const { formatServiceTierLabel, normalizeServiceTier } = require('./service-tier');
 const { installLogTimestamps } = require('./app/logging');
 const {
   AGENT_MAX_BUFFER,
@@ -321,7 +322,7 @@ const agentRunner = createAgentRunner({
           chatId: options.chatId,
           topicId: options.topicId,
         }),
-      serviceTier: globalServiceTiers[AGENT_CODEX_APP] || undefined,
+      serviceTier: normalizeServiceTier(globalServiceTiers[AGENT_CODEX_APP]),
       sandboxPolicy: { type: 'dangerFullAccess' },
       threadId: options.threadId,
     });
@@ -338,7 +339,7 @@ const agentRunner = createAgentRunner({
       effort: options.effort,
       input: buildCodexAppInputs(options.prompt, []),
       model: options.model,
-      serviceTier: globalServiceTiers[AGENT_CODEX_APP] || undefined,
+      serviceTier: normalizeServiceTier(globalServiceTiers[AGENT_CODEX_APP]),
       sandboxPolicy: { type: 'dangerFullAccess' },
     });
   },
@@ -404,7 +405,9 @@ function formatThreadStatusMessage({
   const lines = [
     `<b>Active agent:</b> ${escapeHtml(getAgentLabel(effectiveAgentId))}`,
     `<b>codex-app model:</b> ${escapeHtml(globalModels[AGENT_CODEX_APP] || '(default)')}`,
-    `<b>codex-app service tier:</b> ${escapeHtml(globalServiceTiers[AGENT_CODEX_APP] || 'flex')}`,
+    `<b>codex-app service tier:</b> ${escapeHtml(
+      formatServiceTierLabel(globalServiceTiers[AGENT_CODEX_APP])
+    )}`,
     `<b>Reasoning:</b> ${escapeHtml(globalThinking || '(default)')}`,
     threadBinding
       ? `<b>codex-app thread:</b> <code>${escapeHtml(threadBinding)}</code>`

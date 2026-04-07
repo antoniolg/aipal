@@ -210,7 +210,7 @@ test('/thinking persists the selected reasoning effort', async () => {
   assert.match(replies[0], /Reasoning effort set to high/);
 });
 
-test('/fast toggles codex-app service tier between fast and flex', async () => {
+test('/fast toggles codex-app service tier between fast and default', async () => {
   const handlers = new Map();
   const replies = [];
   let serviceTiers = {};
@@ -275,8 +275,8 @@ test('/fast toggles codex-app service tier between fast and flex', async () => {
   assert.match(replies[0], /service tier fast/);
 
   await handler(ctx);
-  assert.equal(serviceTiers['codex-app'], 'flex');
-  assert.match(replies[1], /service tier flex/);
+  assert.equal(serviceTiers['codex-app'], undefined);
+  assert.match(replies[1], /service tier default/);
 });
 
 test('/fast rejects agents other than codex-app', async () => {

@@ -1,3 +1,9 @@
+const {
+  buildNextServiceTiers,
+  formatServiceTierLabel,
+  normalizeServiceTier,
+} = require('../service-tier');
+
 function registerSettingsCommands(options) {
   const {
     bot,
@@ -246,19 +252,22 @@ function registerSettingsCommands(options) {
     }
 
     try {
-      const currentTier = getGlobalServiceTiers()?.[currentAgentId] || 'flex';
-      const nextTier = currentTier === 'fast' ? 'flex' : 'fast';
-      const nextServiceTiers = {
-        ...(getGlobalServiceTiers() || {}),
-        [currentAgentId]: nextTier,
-      };
+      const currentTier = normalizeServiceTier(
+        getGlobalServiceTiers()?.[currentAgentId]
+      );
+      const nextTier = currentTier === 'fast' ? undefined : 'fast';
+      const nextServiceTiers = buildNextServiceTiers(
+        getGlobalServiceTiers(),
+        currentAgentId,
+        nextTier
+      );
       setGlobalServiceTiers(nextServiceTiers);
       await updateConfig({ serviceTiers: getGlobalServiceTiers() });
 
       await ctx.reply(
-        nextTier === 'fast'
+        normalizeServiceTier(nextTier) === 'fast'
           ? 'codex-app now uses service tier fast.'
-          : 'codex-app now uses service tier flex.'
+          : `codex-app now uses service tier ${formatServiceTierLabel(nextTier)}.`
       );
     } catch (err) {
       console.error(err);
