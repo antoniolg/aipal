@@ -75,3 +75,22 @@ test('/memory with args searches the explicit query', async () => {
   assert.equal(searchCalls[0].query, 'postflow calendario');
   assert.equal(searchCalls[0].limit, 3);
 });
+
+test('/memory truncates long hits before replying', async () => {
+  const { ctx, handler, replies } = buildHarness({
+    searchMemory: async () => [
+      {
+        createdAt: '2026-04-06T10:00:00.000Z',
+        role: 'assistant',
+        scope: 'global',
+        text: 'x'.repeat(5000),
+      },
+    ],
+  });
+
+  await handler(ctx('/memory algo largo'));
+
+  assert.equal(replies.length, 1);
+  assert.ok(replies[0].length < 1000);
+  assert.match(replies[0], /x…/);
+});

@@ -19,15 +19,40 @@ function registerMemoryCommand(options) {
   } = options;
 
   const KNOWN_SUBCOMMANDS = new Set(['status', 'tail', 'search', 'curate']);
+  const MEMORY_REPLY_CHUNK_SIZE = 3000;
+  const MEMORY_HIT_TEXT_LIMIT = 700;
+
+  function chunkText(text, size = MEMORY_REPLY_CHUNK_SIZE) {
+    const chunks = [];
+    const value = String(text || '');
+    for (let index = 0; index < value.length; index += size) {
+      chunks.push(value.slice(index, index + size));
+    }
+    return chunks.length ? chunks : [''];
+  }
+
+  async function replyLong(ctx, text) {
+    for (const chunk of chunkText(text)) {
+      if (chunk.trim()) {
+        await ctx.reply(chunk);
+      }
+    }
+  }
 
   function compactMemoryText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function truncateMemoryText(value, limit = MEMORY_HIT_TEXT_LIMIT) {
+    const text = compactMemoryText(value);
+    if (text.length <= limit) return text;
+    return `${text.slice(0, Math.max(1, limit - 1)).trimEnd()}…`;
+  }
+
   function formatMemoryHit(hit) {
     const ts = String(hit.createdAt || '').replace('T', ' ').slice(0, 16);
     const who = hit.role === 'assistant' ? 'assistant' : 'user';
-    const text = compactMemoryText(hit.text);
+    const text = truncateMemoryText(hit.text);
     const scope = hit.scope ? `${hit.scope}, ` : '';
     return `- [${ts}] (${scope}${who}) ${text}`;
   }
@@ -74,7 +99,7 @@ function registerMemoryCommand(options) {
       return;
     }
     const lines = ['**Memoria relevante**', '', ...hits.map(formatMemoryHit)];
-    await ctx.reply(lines.join('\n'));
+    await replyLong(ctx, lines.join('\n'));
   }
 
   bot.command('memory', async (ctx) => {
