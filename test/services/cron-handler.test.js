@@ -3,7 +3,7 @@ const test = require('node:test');
 
 const { createCronHandler } = require('../../src/services/cron-handler');
 
-test('handleCronTrigger isolates cron context and mirrors final output to shared memory', async () => {
+test('handleCronTrigger isolates cron context and mirrors prompt plus final output to shared memory', async () => {
   const events = [];
   const sentResponses = [];
   const runCalls = [];
@@ -65,6 +65,12 @@ test('handleCronTrigger isolates cron context and mirrors final output to shared
         role: 'assistant',
         kind: 'text',
         text: 'Resumen semanal',
+      },
+      {
+        threadKey: '123:1575:codex',
+        role: 'user',
+        kind: 'cron',
+        text: 'haz el analisis',
       },
       {
         threadKey: '123:1575:codex',

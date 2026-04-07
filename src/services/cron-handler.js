@@ -99,6 +99,15 @@ function createCronHandler(options) {
             chatId,
             topicId,
             agentId: effectiveAgentId,
+            role: 'user',
+            kind: 'cron',
+            text: String(prompt || ''),
+          });
+          await captureMemoryEvent({
+            threadKey: sharedMemoryThreadKey,
+            chatId,
+            topicId,
+            agentId: effectiveAgentId,
             role: 'assistant',
             kind: 'text',
             text: responseText,
