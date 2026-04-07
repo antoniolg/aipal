@@ -44,7 +44,6 @@ const {
   getThreadTail,
 } = require('./memory-store');
 const {
-  buildMemoryRetrievalContext,
   searchMemory,
 } = require('./memory-retrieval');
 const {
@@ -279,7 +278,6 @@ const agentRunner = createAgentRunner({
   agentMaxBuffer: AGENT_MAX_BUFFER,
   agentTimeoutMs: AGENT_TIMEOUT_MS,
   buildBootstrapContext,
-  buildMemoryRetrievalContext,
   buildPrompt,
   documentDir: DOCUMENT_DIR,
   execLocal,
@@ -292,7 +290,6 @@ const agentRunner = createAgentRunner({
   getGlobalThinking: () => globalThinking,
   getThreads: () => threads,
   imageDir: IMAGE_DIR,
-  memoryRetrievalLimit: MEMORY_RETRIEVAL_LIMIT,
   persistThreads,
   postFinalGraceMs: AGENT_POST_FINAL_GRACE_MS,
   prefixTextWithTimestamp,

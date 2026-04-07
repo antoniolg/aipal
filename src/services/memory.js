@@ -106,6 +106,7 @@ function createMemoryService(options) {
   async function buildCodexAppThreadInstructions() {
     const soul = await readSoul();
     const tools = await readTools();
+    const memory = await readMemory();
     const lines = [];
 
     if (soul.exists && soul.content) {
@@ -117,6 +118,11 @@ function createMemoryService(options) {
       lines.push('Tools (tools.md):');
       lines.push(tools.content);
       lines.push('End of tools.');
+    }
+    if (memory.exists && memory.content) {
+      lines.push('Memory (memory.md):');
+      lines.push(memory.content);
+      lines.push('End of memory.');
     }
 
     return lines.join('\n').trim();

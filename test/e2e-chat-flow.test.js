@@ -83,7 +83,9 @@ test('e2e: text handler runs bootstrap + agent + telegram reply with thread cont
     agentMaxBuffer: 1024 * 1024,
     agentTimeoutMs: 5000,
     buildBootstrapContext: async ({ threadKey }) => `BOOTSTRAP(${threadKey})`,
-    buildMemoryRetrievalContext: async () => 'MEMORY_CONTEXT',
+    buildMemoryRetrievalContext: async () => {
+      throw new Error('automatic memory retrieval should be disabled');
+    },
     buildPrompt,
     documentDir,
     execLocal: async (_cmd, args) => {
@@ -202,7 +204,7 @@ test('e2e: text handler runs bootstrap + agent + telegram reply with thread cont
   const firstPrompt = decodePromptFromCommand(commandHistory[0]);
   const secondPrompt = decodePromptFromCommand(commandHistory[1]);
   assert.match(firstPrompt, /BOOTSTRAP\(12345:root:fake\)/);
-  assert.match(firstPrompt, /MEMORY_CONTEXT/);
+  assert.doesNotMatch(firstPrompt, /MEMORY_CONTEXT/);
   assert.match(firstPrompt, /Hola equipo/);
   assert.match(secondPrompt, /\u00bfSeguimos por el mismo hilo\?/);
   assert.doesNotMatch(secondPrompt, /BOOTSTRAP\(/);

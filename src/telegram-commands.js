@@ -31,7 +31,7 @@ function buildHelpCommandLines() {
     '/send_to_codex - Fork the current codex-app session into Codex App under a selected project',
     '/status - Show the current topic status and codex-app binding',
     '/stop - Interrupt the active run in this topic',
-    '/memory [status|tail|search|curate] - Memory capture + retrieval + curation',
+    '/memory [query|status|tail|search|curate] - Manual memory retrieval + curation',
     '/reset - Reset current agent session',
     '/cron [list|reload|chatid|assign|unassign|run|inspect] - Manage cron jobs',
     '/later <ISO> | <prompt> - Schedule a one-shot future run',

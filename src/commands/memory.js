@@ -18,10 +18,70 @@ function registerMemoryCommand(options) {
     getTopicId,
   } = options;
 
+  const KNOWN_SUBCOMMANDS = new Set(['status', 'tail', 'search', 'curate']);
+
+  function compactMemoryText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function formatMemoryHit(hit) {
+    const ts = String(hit.createdAt || '').replace('T', ' ').slice(0, 16);
+    const who = hit.role === 'assistant' ? 'assistant' : 'user';
+    const text = compactMemoryText(hit.text);
+    const scope = hit.scope ? `${hit.scope}, ` : '';
+    return `- [${ts}] (${scope}${who}) ${text}`;
+  }
+
+  function buildSearchQueryFromTail(events) {
+    const snippets = [];
+    for (const event of [...events].reverse()) {
+      if (event.role !== 'user') continue;
+      const text = compactMemoryText(event.text);
+      if (!text || /^\/memory(?:@\w+)?(?:\s|$)/i.test(text)) continue;
+      snippets.push(text);
+      if (snippets.length >= 3) break;
+    }
+    return snippets.reverse().join('\n').slice(0, 2200).trim();
+  }
+
+  async function runSearch(ctx, params) {
+    const {
+      agentId,
+      chatId,
+      limit,
+      query,
+      threadKey,
+      topicId,
+    } = params;
+    let resolvedQuery = compactMemoryText(query);
+    if (!resolvedQuery) {
+      const events = await getThreadTail(threadKey, { limit: 12 });
+      resolvedQuery = buildSearchQueryFromTail(events);
+    }
+    if (!resolvedQuery) {
+      await ctx.reply('No tengo suficiente contexto reciente para buscar memoria. Usa: /memory <query>');
+      return;
+    }
+    const hits = await searchMemory({
+      query: resolvedQuery,
+      chatId,
+      topicId,
+      agentId,
+      limit,
+    });
+    if (!hits.length) {
+      await ctx.reply('No relevant memory found for that query.');
+      return;
+    }
+    const lines = ['**Memoria relevante**', '', ...hits.map(formatMemoryHit)];
+    await ctx.reply(lines.join('\n'));
+  }
+
   bot.command('memory', async (ctx) => {
     const value = extractCommandValue(ctx.message.text);
     const parts = value ? value.split(/\s+/).filter(Boolean) : [];
-    const subcommand = (parts[0] || 'status').toLowerCase();
+    const firstToken = (parts[0] || '').toLowerCase();
+    const subcommand = KNOWN_SUBCOMMANDS.has(firstToken) ? firstToken : 'search';
     const chatId = ctx.chat.id;
     const topicId = getTopicId(ctx);
     const topicKey = buildTopicKey(chatId, topicId);
@@ -73,35 +133,23 @@ function registerMemoryCommand(options) {
     }
 
     if (subcommand === 'search') {
-      const query = parts.slice(1).join(' ').trim();
-      if (!query) {
-        await ctx.reply('Usage: /memory search <query>');
-        return;
-      }
+      const explicitSearch = firstToken === 'search';
+      const searchParts = explicitSearch ? parts.slice(1) : parts;
       const parsedLimit = Number(parts[parts.length - 1]);
       const limit = Number.isFinite(parsedLimit)
         ? Math.max(1, Math.min(20, Math.trunc(parsedLimit)))
         : memoryRetrievalLimit;
+      const queryParts = Number.isFinite(parsedLimit) ? searchParts.slice(0, -1) : searchParts;
+      const query = queryParts.join(' ').trim();
       try {
-        const hits = await searchMemory({
+        await runSearch(ctx, {
           query,
           chatId,
           topicId,
           agentId: effectiveAgentId,
+          threadKey,
           limit,
         });
-        if (!hits.length) {
-          await ctx.reply('No relevant memory found for that query.');
-          return;
-        }
-        const lines = hits.map((hit) => {
-          const ts = String(hit.createdAt || '').replace('T', ' ').slice(0, 16);
-          const who = hit.role === 'assistant' ? 'assistant' : 'user';
-          const text = String(hit.text || '').replace(/\s+/g, ' ').trim();
-          const score = Number(hit.score || 0).toFixed(2);
-          return `- [${ts}] (${hit.scope}, ${who}, score=${score}) ${text}`;
-        });
-        await ctx.reply(lines.join('\n'));
       } catch (err) {
         await replyWithError(ctx, 'Memory search failed.', err);
       }
@@ -132,7 +180,7 @@ function registerMemoryCommand(options) {
       return;
     }
 
-    await ctx.reply('Usage: /memory [status|tail [n]|search <query>|curate]');
+    await ctx.reply('Usage: /memory [query]|status|tail [n]|search <query>|curate');
   });
 }
 

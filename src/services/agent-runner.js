@@ -3,7 +3,6 @@ function createAgentRunner(options) {
     agentMaxBuffer,
     agentTimeoutMs,
     buildBootstrapContext,
-    buildMemoryRetrievalContext,
     buildPrompt,
     documentDir,
     execLocal,
@@ -16,7 +15,6 @@ function createAgentRunner(options) {
     getGlobalThinking,
     getThreads,
     imageDir,
-    memoryRetrievalLimit,
     persistThreads,
     postFinalGraceMs = 2500,
     prefixTextWithTimestamp,
@@ -267,7 +265,6 @@ function createAgentRunner(options) {
       imagePaths,
       scriptContext,
       documentPaths,
-      restrictMemoryToThread = false,
       onFinalResponse,
       onProgressUpdate,
       onSettled,
@@ -306,7 +303,9 @@ function createAgentRunner(options) {
     }
     if (!threadId) {
       const bootstrap = await buildBootstrapContext({
+        includeMemory: !(agent.backend === 'app-server' && agent.id === 'codex-app'),
         includeSoul: !(agent.backend === 'app-server' && agent.id === 'codex-app'),
+        includeThreadMemory: false,
         includeTools: !(agent.backend === 'app-server' && agent.id === 'codex-app'),
         threadKey,
       });
@@ -314,21 +313,6 @@ function createAgentRunner(options) {
         ? `${bootstrap}\n\n${promptWithContext}`
         : bootstrap;
     }
-    const retrievalContext = await buildMemoryRetrievalContext({
-      query: prompt,
-      chatId,
-      topicId,
-      agentId: effectiveAgentId,
-      threadKey,
-      restrictToThread: restrictMemoryToThread,
-      limit: memoryRetrievalLimit,
-    });
-    if (retrievalContext) {
-      promptWithContext = promptWithContext
-        ? `${promptWithContext}\n\n${retrievalContext}`
-        : retrievalContext;
-    }
-
     const thinking = getGlobalThinking();
     const model = getGlobalModels()[effectiveAgentId];
     const finalPrompt = buildPrompt(

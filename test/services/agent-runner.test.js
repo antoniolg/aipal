@@ -76,7 +76,7 @@ test('runAgentForChat passes the resolved model into buildPrompt before command 
   assert.equal(buildPromptCalls[0].options.model, 'gpt-5.4');
 });
 
-test('runAgentForChat isolates thread and retrieval when contextKey is provided', async () => {
+test('runAgentForChat isolates thread and skips automatic retrieval when contextKey is provided', async () => {
   const resolveCalls = [];
   const retrievalCalls = [];
   const bootstrapCalls = [];
@@ -115,12 +115,7 @@ test('runAgentForChat isolates thread and retrieval when contextKey is provided'
     },
   ]);
   assert.deepEqual(bootstrapCalls, ['41:ctx:cron:daily-content-curation:codex']);
-  assert.equal(retrievalCalls.length, 1);
-  assert.equal(
-    retrievalCalls[0].threadKey,
-    '41:ctx:cron:daily-content-curation:codex'
-  );
-  assert.equal(retrievalCalls[0].restrictToThread, true);
+  assert.equal(retrievalCalls.length, 0);
 });
 
 test('runAgentForChat streams codex final response before process exit', async () => {
@@ -347,6 +342,7 @@ test('runAgentForChat skips soul/tools bootstrap in codex-app prompts for new th
     buildBootstrapContext: async (options = {}) => {
       bootstrapCalls.push(options);
       return [
+        options.includeMemory === false ? 'NO_MEMORY' : 'WITH_MEMORY',
         options.includeSoul === false ? 'NO_SOUL' : 'WITH_SOUL',
         options.includeTools === false ? 'NO_TOOLS' : 'WITH_TOOLS',
       ].join(' ');
@@ -369,9 +365,11 @@ test('runAgentForChat skips soul/tools bootstrap in codex-app prompts for new th
   });
 
   assert.equal(bootstrapCalls.length, 1);
+  assert.equal(bootstrapCalls[0].includeMemory, false);
   assert.equal(bootstrapCalls[0].includeSoul, false);
+  assert.equal(bootstrapCalls[0].includeThreadMemory, false);
   assert.equal(bootstrapCalls[0].includeTools, false);
-  assert.match(calls[0].prompt, /NO_SOUL NO_TOOLS/);
+  assert.match(calls[0].prompt, /NO_MEMORY NO_SOUL NO_TOOLS/);
 });
 
 test('runAgentForChat reuses a resumed codex-app thread binding', async () => {
@@ -540,8 +538,16 @@ test('stopActiveRun interrupts an active codex-app session-backed turn', async (
 
 test('stopActiveRun queues an early stop until the codex-app turn is ready', async () => {
   let resolveTurn;
+  let resolveRunEntered;
+  let releaseTurnStart;
   const turnDone = new Promise((resolve) => {
     resolveTurn = resolve;
+  });
+  const runEntered = new Promise((resolve) => {
+    resolveRunEntered = resolve;
+  });
+  const turnStartReleased = new Promise((resolve) => {
+    releaseTurnStart = resolve;
   });
   const stopCalls = [];
 
@@ -550,7 +556,8 @@ test('stopActiveRun queues an early stop until the codex-app turn is ready', asy
     resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
       overrideAgentId || 'codex-app',
     runSessionBackedChatTurn: async (options) => {
-      await new Promise((resolve) => setImmediate(resolve));
+      resolveRunEntered();
+      await turnStartReleased;
       options.onTurnStarted({ threadId: 'thread-queued', turnId: 'turn-queued' });
       await turnDone;
       return { text: '', threadId: 'thread-queued', turnId: 'turn-queued' };
@@ -565,11 +572,9 @@ test('stopActiveRun queues an early stop until the codex-app turn is ready', asy
     agentId: 'codex-app',
   });
 
-  let result = await runner.stopActiveRun(88, undefined, 'codex-app');
-  for (let i = 0; i < 10 && result.status === 'idle'; i += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
-    result = await runner.stopActiveRun(88, undefined, 'codex-app');
-  }
+  await runEntered;
+  const result = await runner.stopActiveRun(88, undefined, 'codex-app');
+  releaseTurnStart();
   await runPromise;
 
   assert.equal(result.status, 'queued');
@@ -663,8 +668,16 @@ test('steerActiveRun sends steer requests to an active codex-app turn', async ()
 
 test('steerActiveRun queues steer input until the codex-app turn is ready', async () => {
   let resolveTurn;
+  let resolveRunEntered;
+  let releaseTurnStart;
   const turnDone = new Promise((resolve) => {
     resolveTurn = resolve;
+  });
+  const runEntered = new Promise((resolve) => {
+    resolveRunEntered = resolve;
+  });
+  const turnStartReleased = new Promise((resolve) => {
+    releaseTurnStart = resolve;
   });
   const steerCalls = [];
 
@@ -673,7 +686,8 @@ test('steerActiveRun queues steer input until the codex-app turn is ready', asyn
     resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
       overrideAgentId || 'codex-app',
     runSessionBackedChatTurn: async (options) => {
-      await new Promise((resolve) => setImmediate(resolve));
+      resolveRunEntered();
+      await turnStartReleased;
       options.onTurnStarted({ threadId: 'thread-queued-steer', turnId: 'turn-queued-steer' });
       await turnDone;
       return {
@@ -692,16 +706,14 @@ test('steerActiveRun queues steer input until the codex-app turn is ready', asyn
     agentId: 'codex-app',
   });
 
-  let result = await runner.steerActiveRun(92, undefined, 'ten en cuenta el diff', 'codex-app');
-  for (let i = 0; i < 10 && result.status === 'idle'; i += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
-    result = await runner.steerActiveRun(
-      92,
-      undefined,
-      'ten en cuenta el diff',
-      'codex-app'
-    );
-  }
+  await runEntered;
+  const result = await runner.steerActiveRun(
+    92,
+    undefined,
+    'ten en cuenta el diff',
+    'codex-app'
+  );
+  releaseTurnStart();
 
   await runPromise;
 
