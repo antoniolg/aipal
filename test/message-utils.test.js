@@ -143,6 +143,25 @@ test('buildPrompt does not inject the deprecated GPT-friendly overlay', () => {
   assert.doesNotMatch(prompt, /## GPT Friendly Execution/);
 });
 
+test('buildPrompt allows codex-app progress commentary without private reasoning', () => {
+  const prompt = buildPrompt(
+    'hola',
+    [],
+    '/tmp/aipal/images',
+    '',
+    [],
+    '/tmp/aipal/documents',
+    {
+      agentId: 'codex-app',
+      model: 'gpt-5.4',
+    }
+  );
+
+  assert.match(prompt, /Brief execution progress\/commentary is allowed/);
+  assert.match(prompt, /Do not include chain-of-thought/);
+  assert.doesNotMatch(prompt, /reply only with the final user-facing answer/);
+});
+
 test('parseSlashCommand parses args', () => {
   const parsed = parseSlashCommand('/inbox --max 3');
   assert.deepEqual(parsed, { name: 'inbox', args: '--max 3' });

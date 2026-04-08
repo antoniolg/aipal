@@ -315,9 +315,15 @@ function buildPrompt(
   const currentDate =
     options.currentDate instanceof Date ? options.currentDate : new Date();
   const lines = [];
-  lines.push(
-    'Output style for Telegram: reply only with the final user-facing answer. Do not include reasoning, chain-of-thought, planning steps, or internal process.'
-  );
+  if (options.agentId === 'codex-app') {
+    lines.push(
+      'Output style for Telegram: keep the final answer as the final user-facing answer. Brief execution progress/commentary is allowed before the final answer. Do not include chain-of-thought, hidden reasoning, or private internal deliberation.'
+    );
+  } else {
+    lines.push(
+      'Output style for Telegram: reply only with the final user-facing answer. Do not include reasoning, chain-of-thought, planning steps, or internal process.'
+    );
+  }
   lines.push(
     `Current local time reference: ${currentDate.toISOString()} (default timezone: ${defaultTimeZone}).`
   );
