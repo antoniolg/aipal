@@ -94,8 +94,7 @@ test('buildPrompt includes image hints', () => {
   assert.match(prompt, /\[\[image:\/absolute\/path\]\]/);
   assert.match(prompt, /\[\[document:\/absolute\/path\]\]/);
   assert.match(prompt, /\[\[schedule_once:/);
-  assert.match(prompt, /Current local time reference:/);
-  assert.match(prompt, /default timezone: Europe\/Madrid/);
+  assert.match(prompt, /\[20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\]/);
 });
 
 test('buildPrompt includes slash context', () => {
@@ -157,8 +156,9 @@ test('buildPrompt allows codex-app progress commentary without private reasoning
     }
   );
 
-  assert.match(prompt, /Brief execution progress\/commentary is allowed/);
-  assert.match(prompt, /Do not include chain-of-thought/);
+  assert.match(prompt, /\[20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\]/);
+  assert.doesNotMatch(prompt, /Brief execution progress\/commentary is allowed/);
+  assert.doesNotMatch(prompt, /Do not include chain-of-thought/);
   assert.doesNotMatch(prompt, /reply only with the final user-facing answer/);
 });
 

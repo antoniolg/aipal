@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('path');
+const { buildTimestampPrefix } = require('./time-utils');
 
 function chunkText(text, size) {
   const chunks = [];
@@ -315,17 +316,16 @@ function buildPrompt(
   const currentDate =
     options.currentDate instanceof Date ? options.currentDate : new Date();
   const lines = [];
-  if (options.agentId === 'codex-app') {
-    lines.push(
-      'Output style for Telegram: keep the final answer as the final user-facing answer. Brief execution progress/commentary is allowed before the final answer. Do not include chain-of-thought, hidden reasoning, or private internal deliberation.'
-    );
-  } else {
+  if (options.agentId !== 'codex-app') {
     lines.push(
       'Output style for Telegram: reply only with the final user-facing answer. Do not include reasoning, chain-of-thought, planning steps, or internal process.'
     );
   }
   lines.push(
-    `Current local time reference: ${currentDate.toISOString()} (default timezone: ${defaultTimeZone}).`
+    buildTimestampPrefix({
+      date: currentDate,
+      timeZone: defaultTimeZone,
+    })
   );
   const context = (scriptContext || '').trim();
   if (context) {
@@ -365,7 +365,7 @@ function buildPrompt(
       'Prefer schedule_once for one-time future tasks. Do not create a cron for something that should happen only once.'
     );
     lines.push(
-      'Use ISO-8601 with an explicit UTC offset in runAt. Resolve relative dates like "mañana", "esta tarde", or "el próximo lunes" using the current local time reference and the default timezone.'
+      'Use ISO-8601 with an explicit UTC offset in runAt. Resolve relative dates like "mañana", "esta tarde", or "el próximo lunes" using the timestamp tag and its timezone.'
     );
     lines.push(
       'If the request is ambiguous and a reliable one-shot schedule cannot be inferred, ask one concise clarification instead of scheduling anything.'

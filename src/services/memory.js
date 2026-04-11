@@ -107,7 +107,9 @@ function createMemoryService(options) {
     const soul = await readSoul();
     const tools = await readTools();
     const memory = await readMemory();
-    const lines = [];
+    const lines = [
+      'Output style for Telegram: keep the final answer as the final user-facing answer. Brief execution progress/commentary is allowed before the final answer. Do not include chain-of-thought, hidden reasoning, or private internal deliberation.',
+    ];
 
     if (soul.exists && soul.content) {
       lines.push('Soul (soul.md):');

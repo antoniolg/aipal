@@ -8,6 +8,7 @@ function formatTimestampInTimeZone(date, timeZone) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hourCycle: 'h23',
   });
   const parts = formatter.formatToParts(date);
@@ -15,7 +16,15 @@ function formatTimestampInTimeZone(date, timeZone) {
   for (const part of parts) {
     if (part.type !== 'literal') values[part.type] = part.value;
   }
-  return `${values.year}${values.month}${values.day}T${values.hour}${values.minute}`;
+  const offsetFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'longOffset',
+  });
+  const offsetParts = offsetFormatter.formatToParts(date);
+  const offsetToken =
+    offsetParts.find((part) => part.type === 'timeZoneName')?.value || 'GMT+00:00';
+  const offset = offsetToken.replace(/^GMT/, '');
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}${offset}`;
 }
 
 function buildTimestampPrefix(options = {}) {
