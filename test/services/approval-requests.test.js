@@ -125,3 +125,54 @@ test('approval service marks resolved approvals as stale and rejects later callb
 
   service.shutdown();
 });
+
+test('approval service renders permission approvals with requested scopes', async () => {
+  const { bot, editedMessages, sentMessages } = createBotRecorder();
+  const service = createApprovalService({ bot, logger: { warn() {} } });
+  const answers = [];
+
+  const decisionPromise = service.requestApproval(
+    {
+      kind: 'permissions',
+      permissions: {
+        fileSystem: {
+          read: ['/tmp/demo/input.md'],
+          write: ['/tmp/demo/output'],
+        },
+        network: { enabled: true },
+      },
+      reason: 'Acceso temporal para completar la tarea',
+      requestId: 99,
+      threadId: 'thread-99',
+    },
+    {
+      chatId: 222,
+      topicId: 9,
+    }
+  );
+  await Promise.resolve();
+
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0].text, /Tipo:<\/b> permisos/);
+  assert.match(sentMessages[0].text, /input\.md/);
+  assert.match(sentMessages[0].text, /output/);
+  assert.match(sentMessages[0].text, /Red:<\/b> habilitada/);
+
+  const callbackData =
+    sentMessages[0].options.reply_markup.inline_keyboard[0][1].callback_data;
+  const handled = await service.handleCallbackQuery({
+    answerCbQuery: async (text, options) => {
+      answers.push({ options, text });
+    },
+    callbackQuery: { data: callbackData },
+  });
+
+  assert.equal(handled, true);
+  await Promise.resolve();
+  assert.equal(await decisionPromise, 'acceptForSession');
+  assert.equal(editedMessages.length, 1);
+  assert.match(editedMessages[0].text, /Estado:<\/b> aprobada para la sesion/);
+  assert.equal(answers[0].text, 'Decision: aprobada para la sesion');
+
+  service.shutdown();
+});

@@ -418,6 +418,66 @@ test('createReplyProgressReporter retries delete on finish after retry_after', a
   assert.equal(deleteAttempts, 2);
 });
 
+test('createReplyProgressReporter ignores "message is not modified" edit errors', async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const sent = [];
+    const ctx = {
+      chat: { id: -123 },
+      message: { message_thread_id: 77, is_topic_message: true },
+      reply: async (text, options) => {
+        sent.push({ text, options });
+        return { message_id: 556 };
+      },
+      telegram: {
+        editMessageText: async () => {
+          const err = new Error('Bad Request: message is not modified');
+          err.response = {
+            description:
+              'Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message',
+          };
+          throw err;
+        },
+        deleteMessage: async () => {},
+      },
+    };
+
+    const service = createTelegramReplyService({
+      bot: { telegram: {} },
+      chunkMarkdown: () => [],
+      chunkText: () => [],
+      createScheduledRun: async () => null,
+      documentDir: '/tmp/docs',
+      extractDocumentTokens: () => ({ cleanedText: '', documentPaths: [] }),
+      extractImageTokens: () => ({ cleanedText: '', imagePaths: [] }),
+      extractScheduleOnceTokens: () => ({
+        cleanedText: '',
+        schedules: [],
+        errors: [],
+      }),
+      formatError: () => '',
+      imageDir: '/tmp/images',
+      isPathInside: () => true,
+      markdownToTelegramHtml: (value) => value,
+      progressUpdateMinIntervalMs: 0,
+      resolveEffectiveAgentId: () => 'codex-app',
+    });
+
+    const reporter = service.createReplyProgressReporter(ctx);
+    await reporter.update({ mode: 'raw', text: 'Leyendo repo' });
+    await reporter.update({ mode: 'raw', text: 'Leyendo repo de nuevo' });
+    await reporter.finish();
+
+    assert.equal(sent.length, 1);
+    assert.equal(warnings.length, 0);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('replyWithResponse omits message_thread_id for general topic replies', async () => {
   const replies = [];
   const ctx = {

@@ -268,10 +268,12 @@ function createCodexAppServerClient(options = {}) {
   function createTurnContext({
     includeAgentDeltas = true,
     onApprovalResolved,
+    onServerRequestResolved,
     onFinalResponse,
     onTurnStarted,
     onProgressUpdate,
     requestApproval,
+    requestElicitation,
     threadId,
   }) {
     const deferred = createDeferred();
@@ -325,11 +327,12 @@ function createCodexAppServerClient(options = {}) {
       finalEmitted: false,
       includeAgentDeltas,
       lastAgentText: '',
-      onApprovalResolved,
+      onServerRequestResolved: onServerRequestResolved || onApprovalResolved,
       onFinalResponse,
       onTurnStarted,
       onProgressUpdate,
       requestApproval,
+      requestElicitation,
       threadId,
       turnId: null,
       notifyTurnStarted() {
@@ -467,6 +470,73 @@ function createCodexAppServerClient(options = {}) {
     return context;
   }
 
+  function clonePermissionsProfile(value) {
+    const record = asRecord(value);
+    if (!record) return {};
+    const out = {};
+    const fileSystem = asRecord(record.fileSystem);
+    const network = asRecord(record.network);
+    if (fileSystem) {
+      const nextFileSystem = {};
+      if (Array.isArray(fileSystem.read)) {
+        nextFileSystem.read = fileSystem.read
+          .map((entry) => String(entry || '').trim())
+          .filter(Boolean);
+      }
+      if (Array.isArray(fileSystem.write)) {
+        nextFileSystem.write = fileSystem.write
+          .map((entry) => String(entry || '').trim())
+          .filter(Boolean);
+      }
+      if (Object.keys(nextFileSystem).length > 0) {
+        out.fileSystem = nextFileSystem;
+      }
+    }
+    if (network && typeof network.enabled === 'boolean') {
+      out.network = { enabled: network.enabled };
+    }
+    return out;
+  }
+
+  function buildPermissionsApprovalResult(requestedPermissions, decision) {
+    if (decision === 'acceptForSession') {
+      return {
+        permissions: clonePermissionsProfile(requestedPermissions),
+        scope: 'session',
+      };
+    }
+    if (decision === 'accept') {
+      return {
+        permissions: clonePermissionsProfile(requestedPermissions),
+        scope: 'turn',
+      };
+    }
+    return {
+      permissions: {},
+      scope: 'turn',
+    };
+  }
+
+  function buildElicitationResult(response) {
+    const record = asRecord(response);
+    const action =
+      (typeof response === 'string' ? response : null)
+      || pickString(record, ['action'])
+      || 'cancel';
+    const normalized = {
+      action: ['accept', 'decline', 'cancel'].includes(action) ? action : 'cancel',
+    };
+    if (record && Object.hasOwn(record, 'content')) {
+      normalized.content = record.content ?? null;
+    }
+    if (record && Object.hasOwn(record, '_meta')) {
+      normalized._meta = record._meta;
+    } else if (record && Object.hasOwn(record, 'meta')) {
+      normalized._meta = record.meta;
+    }
+    return normalized;
+  }
+
   async function handleServerRequest(message) {
     const { id, method, params = {} } = message;
     const requestId = id;
@@ -475,6 +545,8 @@ function createCodexAppServerClient(options = {}) {
     if (
       method !== 'item/commandExecution/requestApproval'
       && method !== 'item/fileChange/requestApproval'
+      && method !== 'item/permissions/requestApproval'
+      && method !== 'mcpServer/elicitation/request'
     ) {
       sendRaw({
         id: requestId,
@@ -487,7 +559,13 @@ function createCodexAppServerClient(options = {}) {
 
     if (!context) {
       try {
-        sendRaw({ id: requestId, result: { decision: 'cancel' } });
+        if (method === 'item/permissions/requestApproval') {
+          sendRaw({ id: requestId, result: { permissions: {}, scope: 'turn' } });
+        } else if (method === 'mcpServer/elicitation/request') {
+          sendRaw({ id: requestId, result: { action: 'cancel', content: null } });
+        } else {
+          sendRaw({ id: requestId, result: { decision: 'cancel' } });
+        }
       } catch (err) {
         logger.warn('Failed to respond to orphaned server request:', err);
       }
@@ -497,14 +575,26 @@ function createCodexAppServerClient(options = {}) {
     pendingServerRequests.set(requestId, { resolved: false, threadId });
 
     const kind =
-      method === 'item/fileChange/requestApproval'
-        ? 'file_change'
-        : 'command_execution';
+      method === 'mcpServer/elicitation/request'
+        ? 'elicitation'
+        : method === 'item/permissions/requestApproval'
+        ? 'permissions'
+        : method === 'item/fileChange/requestApproval'
+          ? 'file_change'
+          : 'command_execution';
 
     let decision = null;
     try {
       const approvalItem = context.getItem(String(params.itemId || ''));
-      if (typeof context.requestApproval === 'function') {
+      if (method === 'mcpServer/elicitation/request') {
+        if (typeof context.requestElicitation === 'function') {
+          decision = await context.requestElicitation({
+            ...params,
+            kind,
+            requestId,
+          });
+        }
+      } else if (typeof context.requestApproval === 'function') {
         decision = await context.requestApproval({
           ...params,
           kind,
@@ -523,6 +613,20 @@ function createCodexAppServerClient(options = {}) {
 
     const normalizedDecision =
       typeof decision === 'string' && decision.trim() ? decision.trim() : 'cancel';
+    if (method === 'item/permissions/requestApproval') {
+      sendRaw({
+        id: requestId,
+        result: buildPermissionsApprovalResult(params.permissions, normalizedDecision),
+      });
+      return;
+    }
+    if (method === 'mcpServer/elicitation/request') {
+      sendRaw({
+        id: requestId,
+        result: buildElicitationResult(decision),
+      });
+      return;
+    }
     sendRaw({ id: requestId, result: { decision: normalizedDecision } });
   }
 
@@ -538,8 +642,8 @@ function createCodexAppServerClient(options = {}) {
         pendingServerRequests.delete(requestId);
       }
       const context = getActiveContext(threadId);
-      if (context && typeof context.onApprovalResolved === 'function') {
-        context.onApprovalResolved({ requestId, threadId });
+      if (context && typeof context.onServerRequestResolved === 'function') {
+        context.onServerRequestResolved({ requestId, threadId });
       }
       return;
     }
@@ -787,6 +891,7 @@ function createCodexAppServerClient(options = {}) {
       input,
       model,
       onApprovalResolved,
+      onServerRequestResolved,
       onFinalResponse,
       onTurnStarted,
       onProgressUpdate,
@@ -794,6 +899,7 @@ function createCodexAppServerClient(options = {}) {
       baseInstructions,
       developerInstructions,
       requestApproval,
+      requestElicitation,
       serviceTier,
       sandboxPolicy = { type: 'dangerFullAccess' },
       threadId,
@@ -812,10 +918,12 @@ function createCodexAppServerClient(options = {}) {
     const context = createTurnContext({
       includeAgentDeltas,
       onApprovalResolved,
+      onServerRequestResolved,
       onFinalResponse,
       onTurnStarted,
       onProgressUpdate,
       requestApproval,
+      requestElicitation,
       threadId: resolvedThreadId,
     });
     activeTurns.set(resolvedThreadId, context);

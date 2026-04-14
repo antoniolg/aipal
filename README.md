@@ -91,7 +91,7 @@ Aipal supports Telegram Topics. Sessions and agent overrides are kept per-topic.
 ### Codex App Server
 If you select `/agent codex-app`, Aipal talks to `codex app-server` over stdio instead of invoking the legacy shell flow. Thread state is still isolated per `chatId:topicId:agentId`, so `codex` and `codex-app` can coexist in the same chat without sharing sessions or memory logs.
 
-When `codex-app` requests a command or file-change approval, Aipal sends an inline approval card to Telegram. You can approve once, approve for the session, reject, or cancel without leaving the chat.
+When `codex-app` requests a command, file-change, permission approval, or connector action (for example an MCP elicitation URL), Aipal sends an inline interactive card to Telegram. You can approve, reject, cancel, or open the requested URL without leaving the chat.
 
 You can also reuse previous `codex-app` sessions with `/resume`, which stores the selected `threadId` for the current topic. `/status` shows the current `codex-app` binding and a compact snapshot of the topic state.
 

@@ -109,9 +109,45 @@ function createApprovalService(options) {
     return lines.join('\n');
   }
 
+  function formatPermissionsApprovalText(request) {
+    const lines = ['<b>Approval solicitada</b>', '', '<b>Tipo:</b> permisos'];
+    if (request.reason) {
+      lines.push(`<b>Motivo:</b> ${escapeHtml(request.reason)}`);
+    }
+    const permissions = request.permissions || {};
+    const fileSystem = permissions.fileSystem || {};
+    const readPaths = Array.isArray(fileSystem.read) ? fileSystem.read : [];
+    const writePaths = Array.isArray(fileSystem.write) ? fileSystem.write : [];
+    if (readPaths.length > 0) {
+      lines.push('', `<b>Lectura:</b> ${readPaths.length}`);
+      for (const path of readPaths.slice(0, MAX_LISTED_PATHS)) {
+        lines.push(`• <code>${escapeHtml(path)}</code>`);
+      }
+      if (readPaths.length > MAX_LISTED_PATHS) {
+        lines.push(`• …y ${readPaths.length - MAX_LISTED_PATHS} mas`);
+      }
+    }
+    if (writePaths.length > 0) {
+      lines.push('', `<b>Escritura:</b> ${writePaths.length}`);
+      for (const path of writePaths.slice(0, MAX_LISTED_PATHS)) {
+        lines.push(`• <code>${escapeHtml(path)}</code>`);
+      }
+      if (writePaths.length > MAX_LISTED_PATHS) {
+        lines.push(`• …y ${writePaths.length - MAX_LISTED_PATHS} mas`);
+      }
+    }
+    if (permissions.network?.enabled) {
+      lines.push('<b>Red:</b> habilitada');
+    }
+    return lines.join('\n');
+  }
+
   function formatApprovalText(request) {
     if (request.kind === 'file_change') {
       return formatFileChangeApprovalText(request);
+    }
+    if (request.kind === 'permissions') {
+      return formatPermissionsApprovalText(request);
     }
     return formatCommandApprovalText(request);
   }

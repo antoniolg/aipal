@@ -726,6 +726,219 @@ test('codex app server client routes approval requests and resolution events', a
   await client.shutdown();
 });
 
+test('codex app server client routes permissions approvals and grants the approved subset', async () => {
+  const approvals = [];
+  const resolvedRequests = [];
+  let approvalResponse = null;
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-permissions' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-permissions' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/started',
+          params: { threadId: 'thread-permissions', turn: { id: 'turn-permissions' } },
+        });
+        state.send({
+          id: 92,
+          method: 'item/permissions/requestApproval',
+          params: {
+            threadId: 'thread-permissions',
+            turnId: 'turn-permissions',
+            itemId: 'perm-1',
+            reason: 'Necesita permisos adicionales',
+            permissions: {
+              fileSystem: {
+                read: ['/tmp/demo/readme.md'],
+                write: ['/tmp/demo'],
+              },
+              network: {
+                enabled: true,
+              },
+            },
+          },
+        });
+      });
+      return;
+    }
+    if (message.id === 92 && message.result) {
+      approvalResponse = message;
+      state.send({
+        method: 'serverRequest/resolved',
+        params: {
+          requestId: 92,
+          threadId: 'thread-permissions',
+        },
+      });
+      state.send({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-permissions',
+          turnId: 'turn-permissions',
+          item: {
+            id: 'msg-final',
+            type: 'agentMessage',
+            phase: 'final_answer',
+            text: 'permisos listos',
+          },
+        },
+      });
+      state.send({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-permissions',
+          turn: { id: 'turn-permissions', status: 'completed' },
+        },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const result = await client.runChatTurn({
+    cwd: '/tmp/demo',
+    input: [{ type: 'text', text: 'necesitas permisos' }],
+    onApprovalResolved: (payload) => {
+      resolvedRequests.push(payload);
+    },
+    requestApproval: async (request) => {
+      approvals.push(request);
+      return 'acceptForSession';
+    },
+  });
+
+  assert.equal(result.text, 'permisos listos');
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].kind, 'permissions');
+  assert.equal(approvals[0].requestId, 92);
+  assert.deepEqual(approvalResponse.result, {
+    permissions: {
+      fileSystem: {
+        read: ['/tmp/demo/readme.md'],
+        write: ['/tmp/demo'],
+      },
+      network: {
+        enabled: true,
+      },
+    },
+    scope: 'session',
+  });
+  assert.deepEqual(resolvedRequests, [{ requestId: 92, threadId: 'thread-permissions' }]);
+
+  await client.shutdown();
+});
+
+test('codex app server client routes MCP server elicitations', async () => {
+  const elicitations = [];
+  const resolvedRequests = [];
+  let elicitationResponse = null;
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'thread/start') {
+      state.send({ id: message.id, result: { thread: { id: 'thread-elicitation' } } });
+      return;
+    }
+    if (message.method === 'turn/start') {
+      state.send({ id: message.id, result: { turn: { id: 'turn-elicitation' } } });
+      queueMicrotask(() => {
+        state.send({
+          method: 'turn/started',
+          params: { threadId: 'thread-elicitation', turn: { id: 'turn-elicitation' } },
+        });
+        state.send({
+          id: 93,
+          method: 'mcpServer/elicitation/request',
+          params: {
+            threadId: 'thread-elicitation',
+            turnId: 'turn-elicitation',
+            serverName: 'Notion',
+            mode: 'url',
+            message: 'Conecta tu cuenta',
+            url: 'https://example.com/auth',
+            elicitationId: 'eli-1',
+          },
+        });
+      });
+      return;
+    }
+    if (message.id === 93 && message.result) {
+      elicitationResponse = message;
+      state.send({
+        method: 'serverRequest/resolved',
+        params: {
+          requestId: 93,
+          threadId: 'thread-elicitation',
+        },
+      });
+      state.send({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread-elicitation',
+          turnId: 'turn-elicitation',
+          item: {
+            id: 'msg-final',
+            type: 'agentMessage',
+            phase: 'final_answer',
+            text: 'elicitation lista',
+          },
+        },
+      });
+      state.send({
+        method: 'turn/completed',
+        params: {
+          threadId: 'thread-elicitation',
+          turn: { id: 'turn-elicitation', status: 'completed' },
+        },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const result = await client.runChatTurn({
+    cwd: '/tmp/demo',
+    input: [{ type: 'text', text: 'conecta Notion' }],
+    onServerRequestResolved: (payload) => {
+      resolvedRequests.push(payload);
+    },
+    requestElicitation: async (request) => {
+      elicitations.push(request);
+      return { action: 'accept', content: null };
+    },
+  });
+
+  assert.equal(result.text, 'elicitation lista');
+  assert.equal(elicitations.length, 1);
+  assert.equal(elicitations[0].kind, 'elicitation');
+  assert.equal(elicitations[0].requestId, 93);
+  assert.equal(elicitations[0].serverName, 'Notion');
+  assert.deepEqual(elicitationResponse.result, {
+    action: 'accept',
+    content: null,
+  });
+  assert.deepEqual(resolvedRequests, [{ requestId: 93, threadId: 'thread-elicitation' }]);
+
+  await client.shutdown();
+});
+
 test('codex app server client ignores reasoning and command progress noise', async () => {
   const progressUpdates = [];
   const logger = { warn() {} };

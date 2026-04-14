@@ -46,6 +46,11 @@ function createTelegramReplyService(options) {
     return retryAfterSeconds * 1000;
   }
 
+  function isMessageNotModifiedError(err) {
+    const description = String(err?.response?.description || err?.message || '');
+    return description.includes('message is not modified');
+  }
+
   function getReplyThreadExtra(ctx) {
     return buildTelegramThreadExtra(getTelegramMessageContext(ctx?.message));
   }
@@ -110,6 +115,9 @@ function createTelegramReplyService(options) {
         .catch(() => {})
         .then(action)
         .catch((err) => {
+          if (isMessageNotModifiedError(err)) {
+            return;
+          }
           console.warn('Failed to update progress message:', err);
         });
       return queue;
@@ -120,6 +128,9 @@ function createTelegramReplyService(options) {
       try {
         return await action();
       } catch (err) {
+        if (isMessageNotModifiedError(err)) {
+          return undefined;
+        }
         const retryAfterMs = getRetryAfterMs(err);
         if (!retryAfterMs || (closed && !allowWhenClosed)) {
           throw err;

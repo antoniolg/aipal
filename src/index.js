@@ -133,6 +133,7 @@ const {
   loadScheduledRuns,
 } = require('./services/scheduled-runs');
 const { createApprovalService } = require('./services/approval-requests');
+const { createElicitationService } = require('./services/elicitation-requests');
 const { createCodexDesktopExportService } = require('./services/codex-desktop-export');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
@@ -270,6 +271,7 @@ const {
 } = memoryService;
 
 const approvalService = createApprovalService({ bot });
+const elicitationService = createElicitationService({ bot });
 const codexAppServerClient = createCodexAppServerClient({
   cwd: process.cwd(),
   defaultPersonality: 'friendly',
@@ -310,14 +312,20 @@ const agentRunner = createAgentRunner({
       includeAgentDeltas: options.chatId > 0,
       input: buildCodexAppInputs(options.prompt, options.imagePaths),
       model: options.model,
-      onApprovalResolved: ({ requestId, threadId }) => {
+      onServerRequestResolved: ({ requestId, threadId }) => {
         approvalService.resolveServerRequest({ requestId, threadId });
+        elicitationService.resolveServerRequest({ requestId, threadId });
       },
       onFinalResponse: options.onFinalResponse,
       onProgressUpdate: options.onProgressUpdate,
       onTurnStarted: options.onTurnStarted,
       requestApproval: (request) =>
         approvalService.requestApproval(request, {
+          chatId: options.chatId,
+          topicId: options.topicId,
+        }),
+      requestElicitation: (request) =>
+        elicitationService.requestElicitation(request, {
           chatId: options.chatId,
           topicId: options.topicId,
         }),
@@ -821,6 +829,8 @@ registerHandlers({
   handleCallbackQuery: async (ctx) => {
     const approvalHandled = await approvalService.handleCallbackQuery(ctx);
     if (approvalHandled) return true;
+    const elicitationHandled = await elicitationService.handleCallbackQuery(ctx);
+    if (elicitationHandled) return true;
     const resumeHandled = await resumeThreadsService.handleCallbackQuery(ctx);
     if (resumeHandled) return true;
     return sendToCodexService.handleCallbackQuery(ctx);
@@ -882,6 +892,7 @@ bootstrapApp({
       shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
       stopCodexAppServer: async () => {
         approvalService.shutdown();
+        elicitationService.shutdown();
         resumeThreadsService.shutdown();
         await codexAppServerClient.shutdown();
       },
