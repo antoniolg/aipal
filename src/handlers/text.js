@@ -10,6 +10,7 @@ function registerTextHandler(options) {
     extractMemoryText,
     formatScriptContext,
     getTopicId,
+    getReplyContext,
     lastScriptOutputs,
     parseSlashCommand,
     replyWithError,
@@ -159,6 +160,13 @@ function registerTextHandler(options) {
     }
 
     const effectiveAgentId = resolveEffectiveAgentId(chatId, topicId);
+    const replyContext = getReplyContext?.({
+      agentId: effectiveAgentId,
+      chatId,
+      message: ctx.message,
+      topicId,
+    }) || null;
+    const contextKey = replyContext?.contextKey;
     if (
       effectiveAgentId === 'codex-app'
       && typeof steerActiveRun === 'function'
@@ -168,13 +176,15 @@ function registerTextHandler(options) {
           chatId,
           topicId,
           text,
-          effectiveAgentId
+          effectiveAgentId,
+          contextKey
         );
         if (result?.status === 'steered' || result?.status === 'queued') {
           const memoryThreadKey = buildMemoryThreadKey(
             chatId,
             topicId,
-            effectiveAgentId
+            effectiveAgentId,
+            contextKey
           );
           await captureMemoryEvent({
             threadKey: memoryThreadKey,
@@ -216,7 +226,8 @@ function registerTextHandler(options) {
       const memoryThreadKey = buildMemoryThreadKey(
         chatId,
         topicId,
-        effectiveAgentId
+        effectiveAgentId,
+        contextKey
       );
       try {
         let responseSent = false;
@@ -231,6 +242,7 @@ function registerTextHandler(options) {
         });
         const scriptContext = consumeScriptContext(topicKey);
         const response = await runAgentForChat(chatId, text, {
+          contextKey,
           topicId,
           scriptContext,
           onProgressUpdate: async (lines) => {

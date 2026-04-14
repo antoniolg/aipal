@@ -8,6 +8,7 @@ function createCronHandler(options) {
     captureMemoryEvent,
     enqueue,
     extractMemoryText,
+    registerReplyContext,
     resolveEffectiveAgentId,
     runAgentForChat,
     sendResponseToChat,
@@ -75,6 +76,15 @@ function createCronHandler(options) {
             await sendResponseToChat(chatId, partialResponse, {
               topicId,
               agentId: effectiveAgentId,
+              onMessageSent: (message) => {
+                registerReplyContext?.({
+                  agentId: effectiveAgentId,
+                  chatId,
+                  contextKey,
+                  messageId: message?.message_id,
+                  topicId,
+                });
+              },
             });
           },
         });
@@ -117,6 +127,15 @@ function createCronHandler(options) {
           await sendResponseToChat(chatId, response, {
             topicId,
             agentId: effectiveAgentId,
+            onMessageSent: (message) => {
+              registerReplyContext?.({
+                agentId: effectiveAgentId,
+                chatId,
+                contextKey,
+                messageId: message?.message_id,
+                topicId,
+              });
+            },
           });
         }
         return { ok: true, response, silent: false };

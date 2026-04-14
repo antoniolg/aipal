@@ -7,6 +7,7 @@ test('handleCronTrigger isolates cron context and mirrors prompt plus final outp
   const events = [];
   const sentResponses = [];
   const runCalls = [];
+  const registeredReplies = [];
   const typingCalls = [];
 
   const handleCronTrigger = createCronHandler({
@@ -24,6 +25,9 @@ test('handleCronTrigger isolates cron context and mirrors prompt plus final outp
       events.push(event);
     },
     extractMemoryText: (value) => String(value || '').trim(),
+    registerReplyContext: async (entry) => {
+      registeredReplies.push(entry);
+    },
     resolveEffectiveAgentId: (_chatId, _topicId, agent) => agent || 'codex',
     runAgentForChat: async (_chatId, prompt, options) => {
       runCalls.push({ prompt, options });
@@ -32,6 +36,7 @@ test('handleCronTrigger isolates cron context and mirrors prompt plus final outp
     },
     sendResponseToChat: async (chatId, response, options) => {
       sentResponses.push({ chatId, response, options });
+      await options.onMessageSent?.({ message_id: 987 });
     },
   });
 
@@ -46,6 +51,15 @@ test('handleCronTrigger isolates cron context and mirrors prompt plus final outp
   assert.equal(runCalls[0].options.contextKey, 'cron:weekly-social-strategy');
   assert.equal(runCalls[0].options.restrictMemoryToThread, true);
   assert.equal(sentResponses.length, 1);
+  assert.deepEqual(registeredReplies, [
+    {
+      agentId: 'codex',
+      chatId: 123,
+      contextKey: 'cron:weekly-social-strategy',
+      messageId: 987,
+      topicId: 1575,
+    },
+  ]);
   assert.deepEqual(
     events.map((event) => ({
       threadKey: event.threadKey,

@@ -136,6 +136,7 @@ const { createApprovalService } = require('./services/approval-requests');
 const { createCodexDesktopExportService } = require('./services/codex-desktop-export');
 const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
+const { createReplyContextStore } = require('./services/reply-context');
 const { createResumeThreadsService } = require('./services/resume-threads');
 const { createSendToCodexService } = require('./services/send-to-codex');
 const { createScriptService } = require('./services/scripts');
@@ -213,6 +214,7 @@ const scriptService = createScriptService({
   lastScriptOutputs,
 });
 const { consumeScriptContext, formatScriptContext, runScriptCommand } = scriptService;
+const replyContextStore = createReplyContextStore();
 
 const fileService = createFileService({
   execLocal,
@@ -532,6 +534,7 @@ const handleCronTrigger = createCronHandler({
   captureMemoryEvent,
   enqueue,
   extractMemoryText,
+  registerReplyContext: replyContextStore.registerReplyContext,
   resolveEffectiveAgentId,
   runAgentForChat,
   sendResponseToChat,
@@ -595,6 +598,15 @@ async function hydrateGlobalSettings() {
 
 function getTopicId(ctx) {
   return ctx?.message?.message_thread_id;
+}
+
+function getReplyContext({ agentId, chatId, message, topicId }) {
+  return replyContextStore.resolveReplyContext({
+    agentId,
+    chatId,
+    messageId: message?.reply_to_message?.message_id,
+    topicId,
+  });
 }
 
 bot.start((ctx) => ctx.reply(`Ready. Send a message and I will pass it to ${getAgentLabel(globalAgent)}.`));
@@ -804,6 +816,7 @@ registerHandlers({
   getAudioPayload,
   getDocumentPayload,
   getImagePayload,
+  getReplyContext,
   getTopicId,
   handleCallbackQuery: async (ctx) => {
     const approvalHandled = await approvalService.handleCallbackQuery(ctx);

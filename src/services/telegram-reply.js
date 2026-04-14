@@ -372,7 +372,7 @@ function createTelegramReplyService(options) {
   }
 
   async function sendResponseToChat(chatId, response, sendOptions = {}) {
-    const { topicId, agentId } = sendOptions;
+    const { topicId, agentId, onMessageSent } = sendOptions;
     const threadExtra = buildTelegramThreadExtra({ topicId, forceTopic: true });
     const { cleanedText: afterImages, imagePaths } = extractImageTokens(
       response || '',
@@ -397,11 +397,12 @@ function createTelegramReplyService(options) {
     if (text) {
       for (const chunk of chunkMarkdown(text, 3000)) {
         const formatted = renderTelegramHtml(chunk);
-        await bot.telegram.sendMessage(chatId, formatted, {
+        const sentMessage = await bot.telegram.sendMessage(chatId, formatted, {
           parse_mode: 'HTML',
           disable_web_page_preview: true,
           ...threadExtra,
         });
+        await Promise.resolve(onMessageSent?.(sentMessage));
       }
     }
     const uniqueImages = Array.from(new Set(imagePaths));
@@ -409,7 +410,12 @@ function createTelegramReplyService(options) {
       try {
         if (!isPathInside(imageDir, imagePath)) continue;
         await fs.access(imagePath);
-        await bot.telegram.sendPhoto(chatId, { source: imagePath }, threadExtra);
+        const sentMessage = await bot.telegram.sendPhoto(
+          chatId,
+          { source: imagePath },
+          threadExtra
+        );
+        await Promise.resolve(onMessageSent?.(sentMessage));
       } catch (err) {
         console.warn('Failed to send image:', imagePath, err);
       }
@@ -419,11 +425,12 @@ function createTelegramReplyService(options) {
       try {
         if (!isPathInside(documentDir, documentPath)) continue;
         await fs.access(documentPath);
-        await bot.telegram.sendDocument(
+        const sentMessage = await bot.telegram.sendDocument(
           chatId,
           { source: documentPath },
           threadExtra
         );
+        await Promise.resolve(onMessageSent?.(sentMessage));
       } catch (err) {
         console.warn('Failed to send document:', documentPath, err);
       }

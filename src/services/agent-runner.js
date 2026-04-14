@@ -95,14 +95,14 @@ function createAgentRunner(options) {
     return cancelledRuns;
   }
 
-  async function stopActiveRun(chatId, topicId, overrideAgentId) {
+  async function stopActiveRun(chatId, topicId, overrideAgentId, contextKey) {
     const effectiveAgentId = resolveEffectiveAgentId(
       chatId,
       topicId,
       overrideAgentId
     );
     const run = activeRunsByKey.get(
-      buildActiveRunKey(chatId, topicId, effectiveAgentId)
+      buildActiveRunKey(chatId, topicId, effectiveAgentId, contextKey)
     );
     if (!run || run.settled) {
       return { status: 'idle', agentId: effectiveAgentId };
@@ -123,14 +123,14 @@ function createAgentRunner(options) {
     return { status: 'stopping', agentId: effectiveAgentId };
   }
 
-  async function steerActiveRun(chatId, topicId, text, overrideAgentId) {
+  async function steerActiveRun(chatId, topicId, text, overrideAgentId, contextKey) {
     const effectiveAgentId = resolveEffectiveAgentId(
       chatId,
       topicId,
       overrideAgentId
     );
     const run = activeRunsByKey.get(
-      buildActiveRunKey(chatId, topicId, effectiveAgentId)
+      buildActiveRunKey(chatId, topicId, effectiveAgentId, contextKey)
     );
     if (!run || run.settled || run.finalEmitted) {
       return { status: 'idle', agentId: effectiveAgentId };

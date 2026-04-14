@@ -142,7 +142,7 @@ test('e2e: text handler runs bootstrap + agent + telegram reply with thread cont
     imageDir,
     isPathInside: () => true,
     markdownToTelegramHtml,
-    resolveEffectiveAgentId: () => 'fake',
+    resolveEffectiveAgentId: () => 'codex-app',
   });
 
   registerTextHandler({
@@ -163,7 +163,7 @@ test('e2e: text handler runs bootstrap + agent + telegram reply with thread cont
       await ctx.reply(message);
     },
     replyWithResponse: replyService.replyWithResponse,
-    resolveEffectiveAgentId: () => 'fake',
+    resolveEffectiveAgentId: () => 'codex-app',
     runAgentForChat: agentRunner.runAgentForChat,
     runScriptCommand: async () => '',
     scriptManager: { getScriptMetadata: async () => ({}) },
@@ -253,7 +253,7 @@ test('text handler sends final response before finishing progress UI', async () 
     replyWithResponse: async () => {
       events.push('reply');
     },
-    resolveEffectiveAgentId: () => 'fake',
+    resolveEffectiveAgentId: () => 'codex-app',
     runAgentForChat: async (_chatId, _text, hooks) => {
       await hooks.onFinalResponse('Respuesta final');
       await hooks.onSettled();
@@ -357,4 +357,79 @@ test('text handler steers an active codex-app run instead of enqueuing a new tur
     ['user:text']
   );
   assert.equal(queues.size, 0);
+});
+
+test('text handler continues cron context when replying to a cron message', async () => {
+  const bot = {
+    handlers: new Map(),
+    on(event, handler) {
+      this.handlers.set(event, handler);
+    },
+  };
+
+  const queues = new Map();
+  const enqueue = createEnqueue(queues);
+  const capturedEvents = [];
+  const runCalls = [];
+
+  registerTextHandler({
+    bot,
+    buildMemoryThreadKey: buildThreadKey,
+    buildTopicKey,
+    captureMemoryEvent: async (event) => {
+      capturedEvents.push(event);
+    },
+    consumeScriptContext: () => '',
+    enqueue,
+    extractMemoryText: (value) => String(value || ''),
+    formatScriptContext: () => '',
+    getReplyContext: ({ chatId, message }) => {
+      if (chatId === 777 && message?.reply_to_message?.message_id === 321) {
+        return { contextKey: 'cron:weekly-holded-draft-review' };
+      }
+      return null;
+    },
+    getTopicId: () => undefined,
+    lastScriptOutputs: new Map(),
+    parseSlashCommand,
+    replyWithError: async () => {},
+    replyWithResponse: async () => {},
+    resolveEffectiveAgentId: () => 'fake',
+    runAgentForChat: async (_chatId, text, options) => {
+      runCalls.push({ text, options });
+      await options.onFinalResponse?.('Perfecto, sigo desde ese cron.');
+      return 'Perfecto, sigo desde ese cron.';
+    },
+    runScriptCommand: async () => '',
+    scriptManager: { getScriptMetadata: async () => ({}) },
+    startTyping: () => () => {},
+  });
+
+  const textHandler = bot.handlers.get('text');
+  assert.ok(textHandler);
+
+  const ctx = {
+    chat: { id: 777 },
+    message: {
+      text: 'Apruébalas mañana entonces',
+      reply_to_message: { message_id: 321 },
+    },
+    reply: async () => {},
+    sendChatAction: async () => {},
+  };
+
+  textHandler(ctx);
+  const queued = queues.get(buildTopicKey(ctx.chat.id, undefined));
+  assert.ok(queued);
+  await queued;
+
+  assert.equal(runCalls.length, 1);
+  assert.equal(runCalls[0].options.contextKey, 'cron:weekly-holded-draft-review');
+  assert.deepEqual(
+    capturedEvents.map((event) => event.threadKey),
+    [
+      '777:ctx:cron:weekly-holded-draft-review:fake',
+      '777:ctx:cron:weekly-holded-draft-review:fake',
+    ]
+  );
 });
