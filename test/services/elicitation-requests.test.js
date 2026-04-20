@@ -74,6 +74,61 @@ test('elicitation service sends URL requests to Telegram and resolves accept cal
   service.shutdown();
 });
 
+test('elicitation service exposes accept always when the request supports persistent approval', async () => {
+  const { bot, editedMessages, sentMessages } = createBotRecorder();
+  const service = createElicitationService({ bot, logger: { warn() {} } });
+  const answers = [];
+
+  const responsePromise = service.requestElicitation(
+    {
+      threadId: 'thread-1b',
+      requestId: 33,
+      serverName: 'Notion',
+      mode: 'form',
+      message: 'Aprueba este conector',
+      requestedSchema: {
+        type: 'object',
+        properties: {},
+      },
+      _meta: {
+        persist: ['always'],
+      },
+    },
+    {
+      chatId: 123,
+      topicId: 77,
+    }
+  );
+  await Promise.resolve();
+
+  assert.equal(sentMessages.length, 1);
+  const buttons = sentMessages[0].options.reply_markup.inline_keyboard[0];
+  assert.equal(buttons.length, 3);
+  assert.equal(buttons[0].text, 'Aceptar');
+  assert.equal(buttons[1].text, 'Aceptar Siempre');
+  assert.equal(buttons[2].text, 'Rechazar');
+
+  const handled = await service.handleCallbackQuery({
+    answerCbQuery: async (text, options) => {
+      answers.push({ options, text });
+    },
+    callbackQuery: { data: buttons[1].callback_data },
+  });
+
+  assert.equal(handled, true);
+  await Promise.resolve();
+  assert.deepEqual(await responsePromise, {
+    action: 'accept',
+    content: null,
+    _meta: { persist: 'always' },
+  });
+  assert.equal(editedMessages.length, 1);
+  assert.match(editedMessages[0].text, /Estado:<\/b> aceptada siempre/);
+  assert.equal(answers[0].text, 'Accion: aceptada siempre');
+
+  service.shutdown();
+});
+
 test('elicitation service limits unsupported forms to decline or cancel', async () => {
   const { bot, editedMessages, sentMessages } = createBotRecorder();
   const service = createElicitationService({ bot, logger: { warn() {} } });

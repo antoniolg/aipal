@@ -42,6 +42,25 @@ function createElicitationService(options) {
     return !hasFormFields(request.requestedSchema);
   }
 
+  function supportsPersistMode(request, expectedMode) {
+    const meta =
+      request && typeof request === 'object' && !Array.isArray(request)
+        ? (request._meta && typeof request._meta === 'object' && !Array.isArray(request._meta)
+            ? request._meta
+            : request.meta && typeof request.meta === 'object' && !Array.isArray(request.meta)
+              ? request.meta
+              : null)
+        : null;
+    const persist = meta?.persist;
+    if (typeof persist === 'string') {
+      return persist === expectedMode;
+    }
+    if (Array.isArray(persist)) {
+      return persist.some((value) => value === expectedMode);
+    }
+    return false;
+  }
+
   function formatSchemaSummary(schema) {
     if (!hasFormFields(schema)) return '';
     const fields = Object.keys(schema.properties).slice(0, 6);
@@ -78,9 +97,17 @@ function createElicitationService(options) {
     const actions = [];
     if (entry.canAcceptDirectly) {
       actions.push({ text: 'Aceptar', callback_data: buildCallbackData(entry.token, 'accept') });
+      if (supportsPersistMode(entry.request, 'always')) {
+        actions.push({
+          text: 'Aceptar Siempre',
+          callback_data: buildCallbackData(entry.token, 'accept_always'),
+        });
+      }
+      actions.push({ text: 'Rechazar', callback_data: buildCallbackData(entry.token, 'decline') });
+    } else {
+      actions.push({ text: 'Rechazar', callback_data: buildCallbackData(entry.token, 'decline') });
+      actions.push({ text: 'Cancelar', callback_data: buildCallbackData(entry.token, 'cancel') });
     }
-    actions.push({ text: 'Rechazar', callback_data: buildCallbackData(entry.token, 'decline') });
-    actions.push({ text: 'Cancelar', callback_data: buildCallbackData(entry.token, 'cancel') });
     rows.push(actions);
     return { inline_keyboard: rows };
   }
@@ -108,13 +135,21 @@ function createElicitationService(options) {
     }
   }
 
-  function formatResolvedText(entry, action) {
+  function formatResolvedText(entry, response) {
+    const persistAlways =
+      response?._meta && typeof response._meta === 'object' && !Array.isArray(response._meta)
+        ? response._meta.persist === 'always'
+        : false;
     const labels = {
       accept: 'aceptada',
       cancel: 'cancelada',
       decline: 'rechazada',
     };
-    return `${formatElicitationText(entry.request)}\n\n<b>Estado:</b> ${escapeHtml(labels[action] || action)}`;
+    const label =
+      persistAlways && response?.action === 'accept'
+        ? 'aceptada siempre'
+        : labels[response?.action] || response?.action;
+    return `${formatElicitationText(entry.request)}\n\n<b>Estado:</b> ${escapeHtml(label)}`;
   }
 
   function settleEntry(entry, response) {
@@ -123,7 +158,7 @@ function createElicitationService(options) {
     pendingByToken.delete(entry.token);
     pendingByRequest.delete(buildRequestKey(entry.threadId, entry.requestId));
     entry.resolveResponse(response);
-    void editElicitationMessage(entry, formatResolvedText(entry, response.action));
+    void editElicitationMessage(entry, formatResolvedText(entry, response));
   }
 
   async function requestElicitation(request, context = {}) {
@@ -200,15 +235,24 @@ function createElicitationService(options) {
     }
 
     const normalizedAction =
-      action === 'accept' || action === 'decline' || action === 'cancel'
+      action === 'accept' || action === 'decline' || action === 'cancel' || action === 'accept_always'
         ? action
         : 'cancel';
-    settleEntry(entry, {
-      action: normalizedAction,
-      content: null,
-    });
+    const response =
+      normalizedAction === 'accept_always'
+        ? {
+            action: 'accept',
+            content: null,
+            _meta: { persist: 'always' },
+          }
+        : {
+            action: normalizedAction,
+            content: null,
+          };
+    settleEntry(entry, response);
     const labels = {
       accept: 'aceptada',
+      accept_always: 'aceptada siempre',
       cancel: 'cancelada',
       decline: 'rechazada',
     };
