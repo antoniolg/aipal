@@ -68,6 +68,22 @@ function createAgentRunner(options) {
     }
   }
 
+  function isMissingSessionBackedThreadError(err) {
+    const message = String(err?.message || '');
+    return message.includes('no rollout found for thread id ');
+  }
+
+  async function clearStaleThreadBinding(threads, threadKey) {
+    if (!threadKey || !threads.has(threadKey)) return false;
+    threads.delete(threadKey);
+    try {
+      await persistThreads();
+    } catch (persistErr) {
+      console.warn('Failed to persist cleared stale thread binding:', persistErr);
+    }
+    return true;
+  }
+
   function cancelActiveRuns({ reason = 'shutdown' } = {}) {
     let cancelledRuns = 0;
     for (const run of activeRuns) {
@@ -595,35 +611,54 @@ function createAgentRunner(options) {
           });
           return { status: 'stopping' };
         };
-        const result = await runSessionBackedChatTurn({
-          agentId: agent.id,
-          chatId,
-          cwd: process.cwd(),
-          documentPaths: documentPaths || [],
-          effort: thinking,
-          imagePaths: imagePaths || [],
-          model,
-          onFinalResponse: emitFinalResponse,
-          onProgressUpdate: emitProgressUpdate,
-          onTurnStarted: ({ threadId: activeThreadId, turnId: activeTurnId }) => {
-            run.session = {
-              threadId: String(activeThreadId),
-              turnId: String(activeTurnId),
-            };
-            if (run.stopRequested && !run.stopPending && !run.settled) {
-              run.stopPending = true;
-              Promise.resolve(run.stop({ reason: 'user' })).catch((err) => {
-                run.stopPending = false;
-                console.warn('Failed to stop run after startup:', err);
-              });
-              return;
-            }
-            flushPendingSteers();
-          },
-          prompt: finalPrompt,
-          topicId,
-          threadId,
-        });
+        const runSessionTurn = (activeThreadId) =>
+          runSessionBackedChatTurn({
+            agentId: agent.id,
+            chatId,
+            cwd: process.cwd(),
+            documentPaths: documentPaths || [],
+            effort: thinking,
+            imagePaths: imagePaths || [],
+            model,
+            onFinalResponse: emitFinalResponse,
+            onProgressUpdate: emitProgressUpdate,
+            onTurnStarted: ({ threadId: startedThreadId, turnId: activeTurnId }) => {
+              run.session = {
+                threadId: String(startedThreadId),
+                turnId: String(activeTurnId),
+              };
+              if (run.stopRequested && !run.stopPending && !run.settled) {
+                run.stopPending = true;
+                Promise.resolve(run.stop({ reason: 'user' })).catch((err) => {
+                  run.stopPending = false;
+                  console.warn('Failed to stop run after startup:', err);
+                });
+                return;
+              }
+              flushPendingSteers();
+            },
+            prompt: finalPrompt,
+            topicId,
+            threadId: activeThreadId,
+          });
+
+        let result;
+        try {
+          result = await runSessionTurn(threadId);
+        } catch (err) {
+          if (
+            threadId
+            && isMissingSessionBackedThreadError(err)
+            && await clearStaleThreadBinding(threads, threadKey)
+          ) {
+            console.warn(
+              `Cleared stale session-backed thread binding for ${threadKey}; retrying with a new thread`
+            );
+            result = await runSessionTurn(undefined);
+          } else {
+            throw err;
+          }
+        }
         if (result?.threadId && result?.turnId) {
           run.session = {
             threadId: String(result.threadId),

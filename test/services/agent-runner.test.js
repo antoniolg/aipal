@@ -403,6 +403,51 @@ test('runAgentForChat reuses a resumed codex-app thread binding', async () => {
   assert.equal(calls[0].threadId, 'thread-resumed');
 });
 
+test('runAgentForChat clears a stale codex-app thread binding and retries once', async () => {
+  const calls = [];
+  const { runner, threads, persistedThreadSnapshots } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    resolveThreadId: (_threads, chatId, topicId, agentId) => ({
+      threadKey: `${chatId}:${topicId || 'root'}:${agentId}`,
+      threadId: threads.get(`${chatId}:${topicId || 'root'}:${agentId}`),
+      migrated: false,
+    }),
+    runSessionBackedChatTurn: async (options) => {
+      calls.push(options);
+      if (calls.length === 1) {
+        throw new Error('no rollout found for thread id stale-thread');
+      }
+      return {
+        text: 'respuesta tras reintento',
+        threadId: 'fresh-thread',
+        turnId: 'turn-fresh',
+      };
+    },
+  });
+
+  threads.set('29:root:codex-app', 'stale-thread');
+  const response = await runner.runAgentForChat(29, 'recupera esto', {
+    agentId: 'codex-app',
+  });
+
+  assert.equal(response, 'respuesta tras reintento');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].threadId, 'stale-thread');
+  assert.equal(calls[1].threadId, undefined);
+  assert.equal(threads.get('29:root:codex-app'), 'fresh-thread');
+  assert.equal(persistedThreadSnapshots.length, 2);
+  assert.equal(
+    persistedThreadSnapshots[0].has('29:root:codex-app'),
+    false
+  );
+  assert.equal(
+    persistedThreadSnapshots[1].get('29:root:codex-app'),
+    'fresh-thread'
+  );
+});
+
 test('runAgentForChat assigns a title when a new codex-app thread is created', async () => {
   const titleCalls = [];
   const { runner } = buildRunner({
