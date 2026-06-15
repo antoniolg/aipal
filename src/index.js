@@ -180,6 +180,18 @@ if (allowedUsers.size > 0) {
   );
 }
 
+bot.use((ctx, next) => {
+  const updateType = ctx.updateType || 'unknown';
+  const message = ctx.message || ctx.callbackQuery?.message;
+  const fromId = ctx.from?.id ?? 'unknown';
+  const chatId = ctx.chat?.id ?? message?.chat?.id ?? 'unknown';
+  const topicId = message?.message_thread_id ?? 'root';
+  console.info(
+    `Telegram update received type=${updateType} from=${fromId} chat=${chatId} topic=${topicId}`
+  );
+  return next();
+});
+
 const appState = createAppState({ defaultAgent: AGENT_CODEX });
 const { queues, threadTurns, lastScriptOutputs } = appState;
 let { threads, threadsPersist, agentOverrides, agentOverridesPersist, memoryPersist } = appState;
