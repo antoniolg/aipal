@@ -1,4 +1,5 @@
-require('dotenv').config();
+// Prefer this app's .env over globally exported bot tokens used by other tools.
+require('dotenv').config({ override: true });
 
 const { Telegraf } = require('telegraf');
 const {
