@@ -591,34 +591,6 @@ test('codex app server client sets thread names', async () => {
   await client.shutdown();
 });
 
-test('codex app server client exposes forkThread', async () => {
-  const logger = { warn() {} };
-  const harness = createSpawnHarness((state, message) => {
-    if (message.method === 'initialize') {
-      state.send({ id: message.id, result: {} });
-      return;
-    }
-    if (message.method === 'thread/fork') {
-      state.send({
-        id: message.id,
-        result: {
-          thread: { id: 'thread-forked' },
-        },
-      });
-    }
-  });
-
-  const client = createCodexAppServerClient({
-    logger,
-    spawnProcess: harness.spawnProcess,
-  });
-
-  const forkedThreadId = await client.forkThread({ threadId: 'thread-original' });
-  assert.equal(forkedThreadId, 'thread-forked');
-
-  await client.shutdown();
-});
-
 test('codex app server client routes approval requests and resolution events', async () => {
   const approvals = [];
   const resolvedRequests = [];

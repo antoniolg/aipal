@@ -148,7 +148,6 @@ const { createMemoryService } = require('./services/memory');
 const { createReplyContextStore } = require('./services/reply-context');
 const { createResumeThreadsService } = require('./services/resume-threads');
 const { createProjectSelectionService } = require('./services/project-selection');
-const { createSendToCodexService } = require('./services/send-to-codex');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
 const { syncTelegramCommands } = require('./services/telegram-command-sync');
@@ -536,38 +535,6 @@ const projectSelectionService = createProjectSelectionService({
   },
 });
 
-const sendToCodexService = createSendToCodexService({
-  bot,
-  listProjects: () => codexDesktopExportService.listProjects(),
-  onSendToCodex: async (entry) => {
-    const sourceThreadId = entry?.sourceThread?.threadId;
-    if (!sourceThreadId) {
-      throw new Error('Missing source thread for send_to_codex');
-    }
-    const projectPath = String(entry?.project?.path || '').trim();
-    if (!projectPath) {
-      throw new Error('Missing destination project for send_to_codex');
-    }
-
-    const forkedThreadId = await codexAppServerClient.forkThread({
-      threadId: sourceThreadId,
-    });
-    if (!forkedThreadId) {
-      throw new Error(`thread/fork did not return a new thread id for ${sourceThreadId}`);
-    }
-
-    await codexDesktopExportService.promoteForkedThread({
-      projectPath,
-      threadId: forkedThreadId,
-    });
-
-    return {
-      forkedThreadId,
-      projectPath,
-      sourceThreadId,
-    };
-  },
-});
 
 const telegramReplyService = createTelegramReplyService({
   bot,
@@ -797,20 +764,6 @@ registerCommands({
     if (includeAipal) return threads;
     return threads.filter((thread) => thread?.originator !== 'aipal');
   },
-  getSendToCodexSourceThread: async ({ agentId, chatId, topicId }) => {
-    if (agentId !== AGENT_CODEX_APP) return null;
-    const threadId = getCodexAppThreadId(chatId, topicId);
-    if (!threadId) return null;
-    const threads = await codexAppServerClient.listThreads({});
-    const hit = threads.find((thread) => thread.threadId === threadId);
-    if (!hit) {
-      return { threadId };
-    }
-    if (hit.originator && hit.originator !== 'aipal') {
-      return null;
-    }
-    return hit;
-  },
   listRecentRuns,
   listScheduledRuns: listScheduledRunsFile,
   markdownToTelegramHtml,
@@ -856,8 +809,6 @@ registerCommands({
     resumeThreadsService.sendThreadPicker(ctx, params),
   sendProjectPicker: (ctx, params) =>
     projectSelectionService.sendProjectPicker(ctx, params),
-  sendToCodexPicker: (ctx, sourceThread) =>
-    sendToCodexService.sendProjectPicker(ctx, sourceThread),
   setAgentOverride: (chatId, topicId, agentId) =>
     setAgentOverride(agentOverrides, chatId, topicId, agentId),
   setGlobalAgent: (value) => {
@@ -907,9 +858,7 @@ registerHandlers({
     if (elicitationHandled) return true;
     const resumeHandled = await resumeThreadsService.handleCallbackQuery(ctx);
     if (resumeHandled) return true;
-    const projectHandled = await projectSelectionService.handleCallbackQuery(ctx);
-    if (projectHandled) return true;
-    return sendToCodexService.handleCallbackQuery(ctx);
+    return projectSelectionService.handleCallbackQuery(ctx);
   },
   imageDir: IMAGE_DIR,
   lastScriptOutputs,

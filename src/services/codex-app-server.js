@@ -1010,19 +1010,6 @@ function createCodexAppServerClient(options = {}) {
     });
   }
 
-  async function forkThread({ threadId }) {
-    const normalizedThreadId = String(threadId || '').trim();
-    if (!normalizedThreadId) {
-      throw createError('threadId is required to fork a thread');
-    }
-    const result = await request('thread/fork', {
-      threadId: normalizedThreadId,
-    });
-    return (
-      pickString(asRecord(result.thread), ['id', 'threadId', 'thread_id'])
-      || pickString(asRecord(result), ['threadId', 'thread_id', 'id'])
-    );
-  }
 
   async function interruptTurn({ threadId, turnId }) {
     if (!threadId || !turnId) {
@@ -1071,7 +1058,6 @@ function createCodexAppServerClient(options = {}) {
   }
 
   return {
-    forkThread,
     interruptTurn,
     listModels,
     listThreads,

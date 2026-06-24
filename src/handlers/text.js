@@ -40,7 +40,6 @@ function registerTextHandler(options) {
           'agent',
           'model',
           'resume',
-          'send_to_codex',
           'status',
           'stop',
           'memory',

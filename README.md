@@ -54,7 +54,6 @@ At startup, Aipal also syncs the built-in bot commands to Telegram automatically
 - `/model [model_id|reset]`: view/set/reset the model for the current agent (persisted in `config.json`)
 - `/resume [query] [--all]`: list/search previous `codex-app` sessions and bind one to this topic. By default, sessions created from `aipal` itself are hidden.
 - `/project [reset]`: view/set/reset the persistent Codex project (`cwd`) for this Telegram topic. The next `codex-app` message in that topic uses the selected project until changed.
-- `/send_to_codex`: fork the current topic's `aipal` `codex-app` session into Codex App and assign it to one of Codex's saved projects
 - `/status`: show the effective topic agent plus the current `codex-app` binding/model/reasoning/run state
 - `/memory [status|tail [n]|search <query>|curate]`: inspect, search, and curate automatic memory
 - `/cron [list|reload|chatid|assign|unassign|run <jobId>|inspect <jobId>]`: manage cron jobs (see below)
@@ -95,8 +94,6 @@ If you select `/agent codex-app`, Aipal talks to `codex app-server` over stdio i
 When `codex-app` requests a command, file-change, permission approval, or connector action (for example an MCP elicitation URL), Aipal sends an inline interactive card to Telegram. You can approve, reject, cancel, or open the requested URL without leaving the chat.
 
 You can also reuse previous `codex-app` sessions with `/resume`, which stores the selected `threadId` for the current topic. `/project` stores a persistent Codex project (`cwd`) for the current Telegram topic; selecting a new project clears that topic's current `codex-app` binding so the next message starts in the chosen repo. `/status` shows the current `codex-app` binding, topic project, and a compact snapshot of the topic state.
-
-If you want to keep working on the current `aipal` conversation inside Codex App, `/send_to_codex` uses the `codex-app` thread currently bound to that Telegram topic, forks it through the app-server, and promotes that fork into Codex App under one of the workspaces already visible in the desktop UI. The original Telegram session is left untouched.
 
 ### Cron jobs
 Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).
