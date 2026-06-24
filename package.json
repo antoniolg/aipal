@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "node --check src/index.js",
-    "dev": "node --watch src/index.js",
+    "dev": "node scripts/dev-watch.js",
     "lint": "biome lint .",
     "start": "node src/index.js",
     "test": "node --test"
