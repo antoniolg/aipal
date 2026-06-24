@@ -24,8 +24,8 @@ function registerProjectCommand(options) {
         await Promise.all([persistProjectOverrides(), persistThreads()]);
         await ctx.reply(
           hadProject
-            ? 'Project cleared for this topic. The next codex-app message will use the default cwd.'
-            : 'No project was set for this topic. codex-app will use the default cwd.'
+            ? 'Project cleared for this topic. The next codex-app message will use the default project cwd.'
+            : 'No project was set for this topic. codex-app will use the default project cwd.'
         );
       } catch (err) {
         console.error(err);

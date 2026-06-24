@@ -96,6 +96,7 @@ const {
   AGENT_MAX_BUFFER,
   AGENT_POST_FINAL_GRACE_MS,
   AGENT_TIMEOUT_MS,
+  DEFAULT_PROJECT_DIR,
   DOCUMENT_CLEANUP_INTERVAL_MS,
   DOCUMENT_DIR,
   DOCUMENT_TTL_HOURS,
@@ -113,8 +114,11 @@ const {
   WHISPER_LANGUAGE,
   WHISPER_MODEL,
   WHISPER_TIMEOUT_MS,
+  ensureDefaultProjectDir,
 } = require('./app/env');
 const { createAppState } = require('./app/state');
+
+const defaultProjectDir = ensureDefaultProjectDir();
 const {
   execLocal,
   execLocalStreaming,
@@ -301,7 +305,7 @@ const {
 const approvalService = createApprovalService({ bot });
 const elicitationService = createElicitationService({ bot });
 const codexAppServerClient = createCodexAppServerClient({
-  cwd: process.cwd(),
+  cwd: defaultProjectDir,
   defaultPersonality: 'friendly',
 });
 const codexDesktopExportService = createCodexDesktopExportService();
@@ -327,7 +331,8 @@ const agentRunner = createAgentRunner({
   prefixTextWithTimestamp,
   resolveEffectiveAgentId,
   resolveThreadId,
-  resolveCwd: (chatId, topicId) => getProjectOverride(projectOverrides, chatId, topicId) || process.cwd(),
+  resolveCwd: (chatId, topicId) =>
+    getProjectOverride(projectOverrides, chatId, topicId) || defaultProjectDir,
   runSessionBackedChatTurn: async (options) => {
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
@@ -370,7 +375,7 @@ const agentRunner = createAgentRunner({
     const developerInstructions = await buildCodexAppThreadInstructions();
     return codexAppServerClient.runOneShot({
       approvalPolicy: 'on-request',
-      cwd: process.cwd(),
+      cwd: defaultProjectDir,
       developerInstructions: developerInstructions || undefined,
       effort: options.effort,
       input: buildCodexAppInputs(options.prompt, []),
@@ -443,6 +448,7 @@ function formatThreadStatusMessage({
   effectiveAgentId,
   threadBinding,
   threadState,
+  defaultProjectPath,
   topicProjectPath,
 }) {
   const lines = [
@@ -454,7 +460,9 @@ function formatThreadStatusMessage({
     `<b>Reasoning:</b> ${escapeHtml(globalThinking || '(default)')}`,
     topicProjectPath
       ? `<b>Topic project:</b> <code>${escapeHtml(topicProjectPath)}</code>`
-      : '<b>Topic project:</b> (default cwd)',
+      : `<b>Topic project:</b> default (<code>${escapeHtml(
+          defaultProjectPath || DEFAULT_PROJECT_DIR
+        )}</code>)`,
     threadBinding
       ? `<b>codex-app thread:</b> <code>${escapeHtml(threadBinding)}</code>`
       : '<b>codex-app thread:</b> (no binding)',
@@ -797,6 +805,7 @@ registerCommands({
       effectiveAgentId,
       threadBinding,
       threadState,
+      defaultProjectPath: defaultProjectDir,
       topicProjectPath: getProjectOverride(projectOverrides, chatId, topicId),
     });
   },

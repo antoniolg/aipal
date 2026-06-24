@@ -1,5 +1,21 @@
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+function expandHomePath(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return raw;
+  if (raw === '~') return os.homedir();
+  if (raw.startsWith(`~${path.sep}`) || raw.startsWith('~/')) {
+    return path.join(os.homedir(), raw.slice(2));
+  }
+  return raw;
+}
+
+function resolveDefaultProjectDir(raw) {
+  const configured = expandHomePath(raw || path.join(os.homedir(), '.aipal'));
+  return path.resolve(configured);
+}
 
 function readNumberEnv(raw, fallback) {
   const value = Number(raw);
@@ -28,6 +44,9 @@ const DOCUMENT_DIR = path.resolve(path.join(os.tmpdir(), 'aipal', 'documents'));
 const DOCUMENT_TTL_HOURS = 24;
 const DOCUMENT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
+const DEFAULT_PROJECT_DIR = resolveDefaultProjectDir(
+  process.env.AIPAL_DEFAULT_PROJECT_DIR
+);
 const SCRIPTS_DIR =
   process.env.AIPAL_SCRIPTS_DIR ||
   path.join(os.homedir(), '.config', 'aipal', 'scripts');
@@ -65,10 +84,16 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = readNumberEnv(
 );
 const SCRIPT_NAME_REGEX = /^[A-Za-z0-9_-]+$/;
 
+function ensureDefaultProjectDir() {
+  fs.mkdirSync(DEFAULT_PROJECT_DIR, { recursive: true });
+  return DEFAULT_PROJECT_DIR;
+}
+
 module.exports = {
   AGENT_MAX_BUFFER,
   AGENT_POST_FINAL_GRACE_MS,
   AGENT_TIMEOUT_MS,
+  DEFAULT_PROJECT_DIR,
   DOCUMENT_CLEANUP_INTERVAL_MS,
   DOCUMENT_DIR,
   DOCUMENT_TTL_HOURS,
@@ -86,6 +111,9 @@ module.exports = {
   WHISPER_LANGUAGE,
   WHISPER_MODEL,
   WHISPER_TIMEOUT_MS,
+  ensureDefaultProjectDir,
+  expandHomePath,
   readBooleanEnv,
   readNumberEnv,
+  resolveDefaultProjectDir,
 };

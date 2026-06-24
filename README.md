@@ -93,7 +93,7 @@ If you select `/agent codex-app`, Aipal talks to `codex app-server` over stdio i
 
 When `codex-app` requests a command, file-change, permission approval, or connector action (for example an MCP elicitation URL), Aipal sends an inline interactive card to Telegram. You can approve, reject, cancel, or open the requested URL without leaving the chat.
 
-You can also reuse previous `codex-app` sessions with `/resume`, which stores the selected `threadId` for the current topic. `/project` stores a persistent Codex project (`cwd`) for the current Telegram topic; selecting a new project clears that topic's current `codex-app` binding so the next message starts in the chosen repo. `/status` shows the current `codex-app` binding, topic project, and a compact snapshot of the topic state.
+You can also reuse previous `codex-app` sessions with `/resume`, which stores the selected `threadId` for the current topic. `/project` stores a persistent Codex project (`cwd`) for the current Telegram topic; selecting a new project clears that topic's current `codex-app` binding so the next message starts in the chosen repo. Topics without `/project` use `AIPAL_DEFAULT_PROJECT_DIR` or `~/.aipal`. `/status` shows the current `codex-app` binding, topic project, and a compact snapshot of the topic state.
 
 ### Cron jobs
 Cron jobs are loaded from `~/.config/aipal/cron.json` (or `$XDG_CONFIG_HOME/aipal/cron.json`) and are sent to a single Telegram chat (the `cronChatId` configured in `config.json`).
@@ -146,6 +146,7 @@ The bot will send the document back to Telegram.
 The only required environment variable is `TELEGRAM_BOT_TOKEN` in `.env`.
 
 Optional:
+- `AIPAL_DEFAULT_PROJECT_DIR`: default Codex project `cwd` for topics without `/project` (default: `~/.aipal`)
 - `AIPAL_SCRIPTS_DIR`: directory for slash scripts (default: `~/.config/aipal/scripts`)
 - `AIPAL_SCRIPT_TIMEOUT_MS`: timeout for slash scripts (default: 120000)
 - `AIPAL_AGENT_POST_FINAL_GRACE_MS`: grace period after streaming a final Codex response before terminating a lingering local agent process (default: 2500)
