@@ -16,12 +16,14 @@ const {
   SOUL_PATH,
   TOOLS_PATH,
   loadAgentOverrides,
+  loadProjectOverrides,
   loadThreads,
   readConfig,
   readMemory,
   readSoul,
   readTools,
   saveAgentOverrides,
+  saveProjectOverrides,
   saveThreads,
   updateConfig,
 } = require('./config-store');
@@ -30,6 +32,11 @@ const {
   getAgentOverride,
   setAgentOverride,
 } = require('./agent-overrides');
+const {
+  clearProjectOverride,
+  getProjectOverride,
+  setProjectOverride,
+} = require('./project-overrides');
 const {
   buildThreadKey,
   buildTopicKey,
@@ -140,6 +147,7 @@ const { createFileService } = require('./services/files');
 const { createMemoryService } = require('./services/memory');
 const { createReplyContextStore } = require('./services/reply-context');
 const { createResumeThreadsService } = require('./services/resume-threads');
+const { createProjectSelectionService } = require('./services/project-selection');
 const { createSendToCodexService } = require('./services/send-to-codex');
 const { createScriptService } = require('./services/scripts');
 const { createTelegramReplyService } = require('./services/telegram-reply');
@@ -194,7 +202,15 @@ bot.use((ctx, next) => {
 
 const appState = createAppState({ defaultAgent: AGENT_CODEX });
 const { queues, threadTurns, lastScriptOutputs } = appState;
-let { threads, threadsPersist, agentOverrides, agentOverridesPersist, memoryPersist } = appState;
+let {
+  threads,
+  threadsPersist,
+  agentOverrides,
+  agentOverridesPersist,
+  projectOverrides,
+  projectOverridesPersist,
+  memoryPersist,
+} = appState;
 const SCRIPT_CONTEXT_MAX_CHARS = 8000;
 let memoryEventsSinceCurate = 0;
 let globalThinking;
@@ -312,6 +328,7 @@ const agentRunner = createAgentRunner({
   prefixTextWithTimestamp,
   resolveEffectiveAgentId,
   resolveThreadId,
+  resolveCwd: (chatId, topicId) => getProjectOverride(projectOverrides, chatId, topicId) || process.cwd(),
   runSessionBackedChatTurn: async (options) => {
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
@@ -416,11 +433,18 @@ function setThreadBinding(chatId, topicId, agentId, threadId) {
   return persistThreads();
 }
 
+function clearCodexAppThreadForTopic(chatId, topicId) {
+  const removed = clearThreadForAgent(threads, chatId, topicId, AGENT_CODEX_APP);
+  threadTurns.delete(buildThreadKey(chatId, normalizeTopicId(topicId), AGENT_CODEX_APP));
+  return removed;
+}
+
 function formatThreadStatusMessage({
   activeRunState,
   effectiveAgentId,
   threadBinding,
   threadState,
+  topicProjectPath,
 }) {
   const lines = [
     `<b>Active agent:</b> ${escapeHtml(getAgentLabel(effectiveAgentId))}`,
@@ -429,6 +453,9 @@ function formatThreadStatusMessage({
       formatServiceTierLabel(globalServiceTiers[AGENT_CODEX_APP])
     )}`,
     `<b>Reasoning:</b> ${escapeHtml(globalThinking || '(default)')}`,
+    topicProjectPath
+      ? `<b>Topic project:</b> <code>${escapeHtml(topicProjectPath)}</code>`
+      : '<b>Topic project:</b> (default cwd)',
     threadBinding
       ? `<b>codex-app thread:</b> <code>${escapeHtml(threadBinding)}</code>`
       : '<b>codex-app thread:</b> (no binding)',
@@ -488,6 +515,24 @@ const resumeThreadsService = createResumeThreadsService({
         }
       );
     }
+  },
+});
+
+const projectSelectionService = createProjectSelectionService({
+  bot,
+  listProjects: () => codexDesktopExportService.listProjects(),
+  onSelectProject: async (entry) => {
+    const projectPath = String(entry?.project?.path || '').trim();
+    if (!projectPath) {
+      throw new Error('Missing selected project path');
+    }
+    setProjectOverride(projectOverrides, entry.chatId, entry.topicId, projectPath);
+    clearCodexAppThreadForTopic(entry.chatId, entry.topicId);
+    await Promise.all([persistProjectOverrides(), persistThreads()]);
+    return {
+      projectLabel: entry.project.label,
+      projectPath,
+    };
   },
 });
 
@@ -580,6 +625,13 @@ function persistAgentOverrides() {
   return agentOverridesPersist;
 }
 
+function persistProjectOverrides() {
+  projectOverridesPersist = projectOverridesPersist
+    .catch(() => { })
+    .then(() => saveProjectOverrides(projectOverrides));
+  return projectOverridesPersist;
+}
+
 function persistMemory(task) {
   memoryPersist = memoryPersist
     .catch(() => { })
@@ -641,6 +693,9 @@ registerCommands({
   cancelScheduledRun,
   clearAgentOverride: (chatId, topicId) =>
     clearAgentOverride(agentOverrides, chatId, topicId),
+  clearProjectOverride: (chatId, topicId) =>
+    clearProjectOverride(projectOverrides, chatId, topicId),
+  clearCodexAppThreadForTopic,
   clearModelOverride,
   clearThreadForAgent: (chatId, topicId, agentId) =>
     clearThreadForAgent(threads, chatId, topicId, agentId),
@@ -655,6 +710,8 @@ registerCommands({
   getAgentLabel,
   getAgentOverride: (chatId, topicId) =>
     getAgentOverride(agentOverrides, chatId, topicId),
+  getProjectOverride: (chatId, topicId) =>
+    getProjectOverride(projectOverrides, chatId, topicId),
   getCronDefaultChatId: () => cronDefaultChatId,
   getCronScheduler: () => cronScheduler,
   getOneShotScheduler: () => oneShotScheduler,
@@ -762,6 +819,7 @@ registerCommands({
   normalizeTopicId,
   persistAgentOverrides,
   persistMemory,
+  persistProjectOverrides,
   persistThreads,
   replyWithError,
   readResumeThreadState: async ({ chatId, effectiveAgentId, topicId }) => {
@@ -786,6 +844,7 @@ registerCommands({
       effectiveAgentId,
       threadBinding,
       threadState,
+      topicProjectPath: getProjectOverride(projectOverrides, chatId, topicId),
     });
   },
   resolveEffectiveAgentId,
@@ -795,6 +854,8 @@ registerCommands({
   searchMemory,
   sendResumeThreadPicker: (ctx, params) =>
     resumeThreadsService.sendThreadPicker(ctx, params),
+  sendProjectPicker: (ctx, params) =>
+    projectSelectionService.sendProjectPicker(ctx, params),
   sendToCodexPicker: (ctx, sourceThread) =>
     sendToCodexService.sendProjectPicker(ctx, sourceThread),
   setAgentOverride: (chatId, topicId, agentId) =>
@@ -846,6 +907,8 @@ registerHandlers({
     if (elicitationHandled) return true;
     const resumeHandled = await resumeThreadsService.handleCallbackQuery(ctx);
     if (resumeHandled) return true;
+    const projectHandled = await projectSelectionService.handleCallbackQuery(ctx);
+    if (projectHandled) return true;
     return sendToCodexService.handleCallbackQuery(ctx);
   },
   imageDir: IMAGE_DIR,
@@ -872,9 +935,13 @@ bootstrapApp({
       notifyCronAlert,
       hydrateGlobalSettings,
       loadAgentOverrides,
+      loadProjectOverrides,
       loadThreads,
       setAgentOverrides: (value) => {
         agentOverrides = value;
+      },
+      setProjectOverrides: (value) => {
+        projectOverrides = value;
       },
       setCronDefaultChatId: (value) => {
         cronDefaultChatId = value;
@@ -900,13 +967,19 @@ bootstrapApp({
       cancelActiveRuns,
       getCronScheduler: () => cronScheduler,
       getOneShotScheduler: () => oneShotScheduler,
-      getPersistPromises: () => [threadsPersist, agentOverridesPersist, memoryPersist],
+      getPersistPromises: () => [
+        threadsPersist,
+        agentOverridesPersist,
+        projectOverridesPersist,
+        memoryPersist,
+      ],
       getQueues: () => queues,
       shutdownDrainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
       stopCodexAppServer: async () => {
         approvalService.shutdown();
         elicitationService.shutdown();
         resumeThreadsService.shutdown();
+        projectSelectionService.shutdown();
         await codexAppServerClient.shutdown();
       },
     }),

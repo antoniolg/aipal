@@ -20,6 +20,7 @@ function createAgentRunner(options) {
     prefixTextWithTimestamp,
     resolveEffectiveAgentId,
     resolveThreadId,
+    resolveCwd,
     runSessionBackedChatTurn,
     runSessionBackedOneShot,
     setSessionBackedThreadTitle,
@@ -615,7 +616,9 @@ function createAgentRunner(options) {
           runSessionBackedChatTurn({
             agentId: agent.id,
             chatId,
-            cwd: process.cwd(),
+            cwd: typeof resolveCwd === 'function'
+              ? resolveCwd(chatId, topicId, agent.id, contextKey)
+              : process.cwd(),
             documentPaths: documentPaths || [],
             effort: thinking,
             imagePaths: imagePaths || [],

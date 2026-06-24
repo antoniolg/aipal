@@ -112,3 +112,36 @@ test('saveThreads writes and loadThreads reads threads', async () => {
   const raw = await fs.readFile(THREADS_PATH, 'utf8');
   assert.deepEqual(JSON.parse(raw), { 123: 'thread-123', '-456': 'thread-456' });
 });
+
+test('loadProjectOverrides returns empty map when project overrides file is missing', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-config-'));
+  const { loadProjectOverrides } = loadConfigStore(dir);
+  const overrides = await loadProjectOverrides();
+  assert.equal(overrides.size, 0);
+});
+
+test('saveProjectOverrides writes and loadProjectOverrides reads project overrides', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-config-'));
+  const {
+    loadProjectOverrides,
+    saveProjectOverrides,
+    PROJECT_OVERRIDES_PATH,
+  } = loadConfigStore(dir);
+
+  const input = new Map([
+    ['123:root', '/Users/antonio/Projects/antoniolg/aipal'],
+    ['123:77', '/Users/antonio/Projects/antoniolg/postflow'],
+  ]);
+  await saveProjectOverrides(input);
+
+  const loaded = await loadProjectOverrides();
+  assert.equal(loaded.size, 2);
+  assert.equal(loaded.get('123:root'), '/Users/antonio/Projects/antoniolg/aipal');
+  assert.equal(loaded.get('123:77'), '/Users/antonio/Projects/antoniolg/postflow');
+
+  const raw = await fs.readFile(PROJECT_OVERRIDES_PATH, 'utf8');
+  assert.deepEqual(JSON.parse(raw), {
+    '123:root': '/Users/antonio/Projects/antoniolg/aipal',
+    '123:77': '/Users/antonio/Projects/antoniolg/postflow',
+  });
+});

@@ -772,3 +772,35 @@ test('steerActiveRun queues steer input until the codex-app turn is ready', asyn
     },
   ]);
 });
+
+test('runAgentForChat passes topic project cwd to codex-app turns', async () => {
+  const cwdCalls = [];
+  const turnCalls = [];
+  const { runner } = buildRunner({
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    resolveCwd: (chatId, topicId, agentId, contextKey) => {
+      cwdCalls.push({ agentId, chatId, contextKey, topicId });
+      return topicId === 77
+        ? '/Users/antonio/Projects/antoniolg/aipal'
+        : process.cwd();
+    },
+    runSessionBackedChatTurn: async (options) => {
+      turnCalls.push(options);
+      return { text: 'ok', threadId: 'thread-project', turnId: 'turn-project' };
+    },
+    setSessionBackedThreadTitle: async () => {},
+  });
+
+  const response = await runner.runAgentForChat(123, 'hola', {
+    agentId: 'codex-app',
+    topicId: 77,
+  });
+
+  assert.equal(response, 'ok');
+  assert.deepEqual(cwdCalls, [
+    { chatId: 123, topicId: 77, agentId: 'codex-app', contextKey: undefined },
+  ]);
+  assert.equal(turnCalls.length, 1);
+  assert.equal(turnCalls[0].cwd, '/Users/antonio/Projects/antoniolg/aipal');
+});

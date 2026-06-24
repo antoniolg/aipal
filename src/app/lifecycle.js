@@ -4,8 +4,10 @@ function initializeApp(options) {
     notifyCronAlert,
     hydrateGlobalSettings,
     loadAgentOverrides,
+    loadProjectOverrides,
     loadThreads,
     setAgentOverrides,
+    setProjectOverrides,
     setCronDefaultChatId,
     setCronScheduler,
     setOneShotScheduler,
@@ -32,6 +34,15 @@ function initializeApp(options) {
       console.info(`Loaded ${loaded.size} agent override(s) from disk`);
     })
     .catch((err) => console.warn('Failed to load agent overrides:', err));
+
+  if (typeof loadProjectOverrides === 'function') {
+    loadProjectOverrides()
+      .then((loaded) => {
+        setProjectOverrides(loaded);
+        console.info(`Loaded ${loaded.size} project override(s) from disk`);
+      })
+      .catch((err) => console.warn('Failed to load project overrides:', err));
+  }
 
   hydrateGlobalSettings()
     .then((config) => {

@@ -2,6 +2,7 @@ const { registerCronCommand } = require('../commands/cron');
 const { registerHelpCommands } = require('../commands/help');
 const { registerLaterCommand } = require('../commands/later');
 const { registerMemoryCommand } = require('../commands/memory');
+const { registerProjectCommand } = require('../commands/project');
 const { registerResumeCommand } = require('../commands/resume');
 const { registerRunsCommand } = require('../commands/runs');
 const { registerSendToCodexCommand } = require('../commands/send-to-codex');
@@ -12,6 +13,7 @@ function registerCommands(options) {
   registerHelpCommands(options);
   registerSettingsCommands(options);
   registerResumeCommand(options);
+  registerProjectCommand(options);
   registerSendToCodexCommand(options);
   registerStopCommand(options);
   registerCronCommand(options);

@@ -7,6 +7,8 @@ function createAppState({ defaultAgent }) {
     threadsPersist: Promise.resolve(),
     agentOverrides: new Map(),
     agentOverridesPersist: Promise.resolve(),
+    projectOverrides: new Map(),
+    projectOverridesPersist: Promise.resolve(),
     memoryPersist: Promise.resolve(),
     threadTurns: new Map(),
     lastScriptOutputs: new Map(),
@@ -34,6 +36,13 @@ function persistAgentOverrides(state, saveAgentOverrides) {
   return state.agentOverridesPersist;
 }
 
+function persistProjectOverrides(state, saveProjectOverrides) {
+  state.projectOverridesPersist = state.projectOverridesPersist
+    .catch(() => {})
+    .then(() => saveProjectOverrides(state.projectOverrides));
+  return state.projectOverridesPersist;
+}
+
 function persistMemory(state, task) {
   state.memoryPersist = state.memoryPersist.catch(() => {}).then(task);
   return state.memoryPersist;
@@ -56,6 +65,7 @@ module.exports = {
   createAppState,
   persistAgentOverrides,
   persistMemory,
+  persistProjectOverrides,
   persistThreads,
   resolveEffectiveAgentId,
 };
