@@ -151,6 +151,7 @@ test('codex app server client initializes, streams raw progress, and returns fin
   assert.equal(harness.spawns[0].messages[0].method, 'initialize');
   assert.equal(harness.spawns[0].messages[1].method, 'initialized');
   assert.equal(harness.spawns[0].messages[2].method, 'thread/start');
+  assert.equal(harness.spawns[0].messages[2].params.cwd, '/tmp/demo');
   assert.equal(harness.spawns[0].messages[3].method, 'turn/start');
   assert.equal(
     harness.spawns[0].messages[3].params.approvalPolicy,
@@ -206,6 +207,7 @@ test('codex app server client sends default personality on thread/start and turn
   });
 
   assert.equal(harness.spawns[0].messages[2].method, 'thread/start');
+  assert.equal(harness.spawns[0].messages[2].params.cwd, '/tmp/demo');
   assert.equal(harness.spawns[0].messages[2].params.personality, 'friendly');
   assert.equal(harness.spawns[0].messages[3].method, 'turn/start');
   assert.equal(harness.spawns[0].messages[3].params.personality, 'friendly');

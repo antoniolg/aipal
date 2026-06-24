@@ -856,10 +856,12 @@ function createCodexAppServerClient(options = {}) {
   ) {
     const {
       baseInstructions,
+      cwd: threadCwd,
       developerInstructions,
     } = threadOptions;
     if (threadId) {
       await request('thread/resume', omitUndefined({
+        cwd: threadCwd,
         model,
         personality,
         serviceTier,
@@ -869,6 +871,7 @@ function createCodexAppServerClient(options = {}) {
     }
     const result = await request('thread/start', omitUndefined({
       baseInstructions,
+      cwd: threadCwd,
       developerInstructions,
       model,
       personality,
@@ -912,6 +915,7 @@ function createCodexAppServerClient(options = {}) {
       serviceTier,
       {
         baseInstructions,
+        cwd: turnCwd,
         developerInstructions,
       }
     );
