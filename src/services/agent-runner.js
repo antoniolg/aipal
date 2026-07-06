@@ -21,6 +21,7 @@ function createAgentRunner(options) {
     resolveEffectiveAgentId,
     resolveThreadId,
     resolveCwd,
+    restartSessionBackedServer,
     runSessionBackedChatTurn,
     runSessionBackedOneShot,
     setSessionBackedThreadTitle,
@@ -72,6 +73,19 @@ function createAgentRunner(options) {
   function isMissingSessionBackedThreadError(err) {
     const message = String(err?.message || '');
     return message.includes('no rollout found for thread id ');
+  }
+
+  function isRecoverableSessionBackedThreadError(err) {
+    const message = String(err?.message || '').toLowerCase();
+    return (
+      isMissingSessionBackedThreadError(err)
+      || message.includes(' is archived.')
+      || message.includes('invalid cwd:')
+      || (
+        message.includes('failed to load configuration')
+        && message.includes('operation not permitted')
+      )
+    );
   }
 
   async function clearStaleThreadBinding(threads, threadKey) {
@@ -650,13 +664,24 @@ function createAgentRunner(options) {
           result = await runSessionTurn(threadId);
         } catch (err) {
           if (
-            threadId
-            && isMissingSessionBackedThreadError(err)
-            && await clearStaleThreadBinding(threads, threadKey)
+            isRecoverableSessionBackedThreadError(err)
+            && (
+              !threadId
+              || await clearStaleThreadBinding(threads, threadKey)
+            )
           ) {
-            console.warn(
-              `Cleared stale session-backed thread binding for ${threadKey}; retrying with a new thread`
-            );
+            if (threadId) {
+              console.warn(
+                `Cleared stale session-backed thread binding for ${threadKey}; retrying with a new thread`
+              );
+            } else {
+              console.warn(
+                `Recovering session-backed app-server error for ${threadKey}; retrying with a new thread`
+              );
+            }
+            if (typeof restartSessionBackedServer === 'function') {
+              await restartSessionBackedServer({ agentId: agent.id });
+            }
             result = await runSessionTurn(undefined);
           } else {
             throw err;

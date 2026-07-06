@@ -448,6 +448,103 @@ test('runAgentForChat clears a stale codex-app thread binding and retries once',
   );
 });
 
+test('runAgentForChat clears codex-app binding after configuration permission errors', async () => {
+  const calls = [];
+  const restarts = [];
+  const { runner, threads, persistedThreadSnapshots } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    resolveThreadId: (_threads, chatId, topicId, agentId) => ({
+      threadKey: `${chatId}:${topicId || 'root'}:${agentId}`,
+      threadId: threads.get(`${chatId}:${topicId || 'root'}:${agentId}`),
+      migrated: false,
+    }),
+    runSessionBackedChatTurn: async (options) => {
+      calls.push(options);
+      if (calls.length === 1) {
+        throw new Error(
+          'failed to load configuration: Operation not permitted (os error 1)'
+        );
+      }
+      return {
+        text: 'respuesta recuperada',
+        threadId: 'fresh-config-thread',
+        turnId: 'turn-fresh',
+      };
+    },
+    restartSessionBackedServer: async (options) => {
+      restarts.push(options);
+    },
+  });
+
+  threads.set('31:root:codex-app', 'permission-thread');
+  const response = await runner.runAgentForChat(31, 'recupera esto', {
+    agentId: 'codex-app',
+  });
+
+  assert.equal(response, 'respuesta recuperada');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(restarts, [{ agentId: 'codex-app' }]);
+  assert.equal(calls[0].threadId, 'permission-thread');
+  assert.equal(calls[1].threadId, undefined);
+  assert.equal(threads.get('31:root:codex-app'), 'fresh-config-thread');
+  assert.equal(persistedThreadSnapshots.length, 2);
+  assert.equal(
+    persistedThreadSnapshots[0].has('31:root:codex-app'),
+    false
+  );
+});
+
+test('runAgentForChat clears archived codex-app thread bindings and retries once', async () => {
+  const calls = [];
+  const restarts = [];
+  const { runner, threads, persistedThreadSnapshots } = buildRunner({
+    getGlobalAgent: () => 'codex-app',
+    resolveEffectiveAgentId: (_chatId, _topicId, overrideAgentId) =>
+      overrideAgentId || 'codex-app',
+    resolveThreadId: (_threads, chatId, topicId, agentId) => ({
+      threadKey: `${chatId}:${topicId || 'root'}:${agentId}`,
+      threadId: threads.get(`${chatId}:${topicId || 'root'}:${agentId}`),
+      migrated: false,
+    }),
+    runSessionBackedChatTurn: async (options) => {
+      calls.push(options);
+      if (calls.length === 1) {
+        throw new Error(
+          'session archived-thread is archived. Run `codex unarchive archived-thread` to unarchive it first.'
+        );
+      }
+      return {
+        text: 'respuesta tras archivar',
+        threadId: 'fresh-archived-thread',
+        turnId: 'turn-fresh',
+      };
+    },
+    restartSessionBackedServer: async (options) => {
+      restarts.push(options);
+    },
+  });
+
+  threads.set('42:6484:codex-app', 'archived-thread');
+  const response = await runner.runAgentForChat(42, 'reserva', {
+    agentId: 'codex-app',
+    topicId: 6484,
+  });
+
+  assert.equal(response, 'respuesta tras archivar');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(restarts, [{ agentId: 'codex-app' }]);
+  assert.equal(calls[0].threadId, 'archived-thread');
+  assert.equal(calls[1].threadId, undefined);
+  assert.equal(threads.get('42:6484:codex-app'), 'fresh-archived-thread');
+  assert.equal(persistedThreadSnapshots.length, 2);
+  assert.equal(
+    persistedThreadSnapshots[0].has('42:6484:codex-app'),
+    false
+  );
+});
+
 test('runAgentForChat assigns a title when a new codex-app thread is created', async () => {
   const titleCalls = [];
   const { runner } = buildRunner({

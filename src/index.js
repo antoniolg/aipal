@@ -333,6 +333,12 @@ const agentRunner = createAgentRunner({
   resolveThreadId,
   resolveCwd: (chatId, topicId) =>
     getProjectOverride(projectOverrides, chatId, topicId) || defaultProjectDir,
+  restartSessionBackedServer: async (options) => {
+    if (options.agentId !== AGENT_CODEX_APP) {
+      throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
+    }
+    await codexAppServerClient.shutdown();
+  },
   runSessionBackedChatTurn: async (options) => {
     if (options.agentId !== AGENT_CODEX_APP) {
       throw new Error(`Unsupported session-backed agent: ${options.agentId}`);
