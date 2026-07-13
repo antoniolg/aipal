@@ -106,6 +106,69 @@ test('replyWithResponse sends only in-scope attachments', async () => {
   assert.equal(fallbackReplies.length, 0);
 });
 
+test('replyWithResponse falls back to direct document upload on transient Telegraf failure', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'aipal-doc-fallback-'));
+  const documentDir = path.join(tmp, 'documents');
+  await fs.mkdir(documentDir, { recursive: true });
+  const insideDoc = path.join(documentDir, 'skill.zip');
+  await fs.writeFile(insideDoc, 'zip');
+
+  const notices = [];
+  const directUploads = [];
+  const ctx = {
+    chat: { id: 123 },
+    message: {},
+    reply: async (text) => {
+      notices.push(text);
+    },
+    replyWithPhoto: async () => {},
+    replyWithDocument: async () => {
+      const error = new Error('socket hang up');
+      error.code = 'ECONNRESET';
+      throw error;
+    },
+  };
+
+  const service = createTelegramReplyService({
+    attachmentRetryDelaysMs: [],
+    bot: { telegram: { token: 'token' } },
+    chunkMarkdown: () => [],
+    chunkText: () => [],
+    createScheduledRun: async () => null,
+    directTelegramUpload: async (payload) => {
+      directUploads.push(payload);
+      return { message_id: 10 };
+    },
+    documentDir,
+    extractDocumentTokens: () => ({
+      cleanedText: '',
+      documentPaths: [insideDoc],
+    }),
+    extractImageTokens: () => ({
+      cleanedText: '',
+      imagePaths: [],
+    }),
+    extractScheduleOnceTokens: () => ({
+      cleanedText: '',
+      schedules: [],
+      errors: [],
+    }),
+    formatError: () => '',
+    imageDir: '/tmp/images',
+    isPathInside: (base, target) => target.startsWith(base + path.sep),
+    markdownToTelegramHtml: () => '',
+    resolveEffectiveAgentId: () => 'codex',
+  });
+
+  await service.replyWithResponse(ctx, 'ignored');
+
+  assert.equal(directUploads.length, 1);
+  assert.equal(directUploads[0].chatId, 123);
+  assert.equal(directUploads[0].filePath, insideDoc);
+  assert.equal(directUploads[0].method, 'sendDocument');
+  assert.deepEqual(notices, []);
+});
+
 test('sendResponseToChat preserves topicId in telegram sendMessage', async () => {
   const sentMessages = [];
 

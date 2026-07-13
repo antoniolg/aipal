@@ -1,8 +1,117 @@
 const fs = require('fs/promises');
+const https = require('https');
+const path = require('path');
 const {
   buildTelegramThreadExtra,
   getTelegramMessageContext,
 } = require('./telegram-topics');
+
+const ATTACHMENT_RETRY_DELAYS_MS = [1000, 3000, 7000];
+
+function multipartField(boundary, name, value) {
+  return Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`
+  );
+}
+
+function multipartFile(boundary, name, filename, content, contentType) {
+  return Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${filename}"\r\nContent-Type: ${contentType}\r\n\r\n`
+    ),
+    content,
+    Buffer.from('\r\n'),
+  ]);
+}
+
+function requestTelegramMultipart({ token, method, fields, file }) {
+  const boundary = `----aipal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const parts = [];
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || value === '') continue;
+    parts.push(multipartField(boundary, name, value));
+  }
+  parts.push(
+    multipartFile(
+      boundary,
+      file.fieldName,
+      file.filename,
+      file.content,
+      file.contentType
+    )
+  );
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  const body = Buffer.concat(parts);
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        method: 'POST',
+        hostname: 'api.telegram.org',
+        path: `/bot${token}/${method}`,
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': body.length,
+        },
+        timeout: 60000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let payload;
+          try {
+            payload = JSON.parse(raw);
+          } catch (err) {
+            reject(new Error(`Telegram multipart response was not JSON: ${raw}`));
+            return;
+          }
+          if (!payload.ok) {
+            const error = new Error(payload.description || 'Telegram multipart upload failed');
+            error.response = {
+              error_code: payload.error_code,
+              description: payload.description,
+              parameters: payload.parameters,
+            };
+            reject(error);
+            return;
+          }
+          resolve(payload.result);
+        });
+      }
+    );
+    req.on('timeout', () => {
+      req.destroy(Object.assign(new Error('Telegram multipart upload timed out'), { code: 'ETIMEDOUT' }));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+async function defaultDirectTelegramUpload({ bot, chatId, filePath, fieldName, method, extra }) {
+  const token = bot?.telegram?.token || bot?.token;
+  if (!token) {
+    throw new Error('Missing Telegram bot token for direct upload fallback');
+  }
+  const content = await fs.readFile(filePath);
+  const filename = path.basename(filePath);
+  const fields = {
+    chat_id: chatId,
+    message_thread_id: extra?.message_thread_id,
+  };
+  return requestTelegramMultipart({
+    token,
+    method,
+    fields,
+    file: {
+      fieldName,
+      filename,
+      content,
+      contentType: 'application/octet-stream',
+    },
+  });
+}
 
 function createTelegramReplyService(options) {
   const {
@@ -18,6 +127,8 @@ function createTelegramReplyService(options) {
     imageDir,
     isPathInside,
     markdownToTelegramHtml,
+    attachmentRetryDelaysMs = ATTACHMENT_RETRY_DELAYS_MS,
+    directTelegramUpload = defaultDirectTelegramUpload,
     progressUpdateMinIntervalMs = 1000,
     resolveEffectiveAgentId,
   } = options;
@@ -44,6 +155,66 @@ function createTelegramReplyService(options) {
       return 0;
     }
     return retryAfterSeconds * 1000;
+  }
+
+  function isTransientTelegramSendError(err) {
+    const code = String(err?.code || err?.errno || '').toUpperCase();
+    if (['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENETRESET'].includes(code)) {
+      return true;
+    }
+    const statusCode = Number(err?.response?.error_code);
+    return statusCode === 429 || statusCode >= 500;
+  }
+
+  async function sendWithRetry(action, label, targetPath) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= attachmentRetryDelaysMs.length; attempt += 1) {
+      try {
+        return await action();
+      } catch (err) {
+        lastError = err;
+        const retryAfterMs = getRetryAfterMs(err);
+        const delayMs = retryAfterMs || attachmentRetryDelaysMs[attempt];
+        if (!delayMs || !isTransientTelegramSendError(err)) {
+          break;
+        }
+        console.warn(
+          `Failed to send ${label}, retrying in ${delayMs}ms:`,
+          targetPath,
+          err
+        );
+        await sleep(delayMs);
+      }
+    }
+    throw lastError;
+  }
+
+  async function sendAttachmentFailureNotice(sendText, targetPath, err, extra) {
+    const fileName = path.basename(String(targetPath || 'document'));
+    const detail = escapeHtmlText(formatError(err)).slice(0, 700);
+    await sendText(
+      `No he podido adjuntar <code>${escapeHtmlText(fileName)}</code>.\n\n<pre>${detail}</pre>`,
+      extra
+    );
+  }
+
+  async function sendDocumentWithFallback({ chatId, documentPath, extra, telegrafSend }) {
+    try {
+      return await sendWithRetry(telegrafSend, 'document', documentPath);
+    } catch (err) {
+      if (!isTransientTelegramSendError(err)) {
+        throw err;
+      }
+      console.warn('Telegraf document send failed; trying direct multipart fallback:', documentPath, err);
+      return directTelegramUpload({
+        bot,
+        chatId,
+        filePath: documentPath,
+        fieldName: 'document',
+        method: 'sendDocument',
+        extra,
+      });
+    }
   }
 
   function isMessageNotModifiedError(err) {
@@ -341,9 +512,19 @@ function createTelegramReplyService(options) {
           continue;
         }
         await fs.access(imagePath);
-        await ctx.replyWithPhoto({ source: imagePath }, threadExtra);
+        await sendWithRetry(
+          () => ctx.replyWithPhoto({ source: imagePath }, threadExtra),
+          'image',
+          imagePath
+        );
       } catch (err) {
         console.warn('Failed to send image:', imagePath, err);
+        await sendAttachmentFailureNotice(
+          (text, extra) => ctx.reply(text, { parse_mode: 'HTML', ...extra }),
+          imagePath,
+          err,
+          threadExtra
+        );
       }
     }
     const uniqueDocuments = Array.from(new Set(documentPaths));
@@ -354,9 +535,20 @@ function createTelegramReplyService(options) {
           continue;
         }
         await fs.access(documentPath);
-        await ctx.replyWithDocument({ source: documentPath }, threadExtra);
+        await sendDocumentWithFallback({
+          chatId: ctx?.chat?.id,
+          documentPath,
+          extra: threadExtra,
+          telegrafSend: () => ctx.replyWithDocument({ source: documentPath }, threadExtra),
+        });
       } catch (err) {
         console.warn('Failed to send document:', documentPath, err);
+        await sendAttachmentFailureNotice(
+          (text, extra) => ctx.reply(text, { parse_mode: 'HTML', ...extra }),
+          documentPath,
+          err,
+          threadExtra
+        );
       }
     }
     if (!text && uniqueImages.length === 0 && uniqueDocuments.length === 0) {
@@ -421,14 +613,20 @@ function createTelegramReplyService(options) {
       try {
         if (!isPathInside(imageDir, imagePath)) continue;
         await fs.access(imagePath);
-        const sentMessage = await bot.telegram.sendPhoto(
-          chatId,
-          { source: imagePath },
-          threadExtra
+        const sentMessage = await sendWithRetry(
+          () => bot.telegram.sendPhoto(chatId, { source: imagePath }, threadExtra),
+          'image',
+          imagePath
         );
         await Promise.resolve(onMessageSent?.(sentMessage));
       } catch (err) {
         console.warn('Failed to send image:', imagePath, err);
+        await sendAttachmentFailureNotice(
+          (text, extra) => bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML', ...extra }),
+          imagePath,
+          err,
+          threadExtra
+        );
       }
     }
     const uniqueDocuments = Array.from(new Set(documentPaths));
@@ -436,14 +634,21 @@ function createTelegramReplyService(options) {
       try {
         if (!isPathInside(documentDir, documentPath)) continue;
         await fs.access(documentPath);
-        const sentMessage = await bot.telegram.sendDocument(
+        const sentMessage = await sendDocumentWithFallback({
           chatId,
-          { source: documentPath },
-          threadExtra
-        );
+          documentPath,
+          extra: threadExtra,
+          telegrafSend: () => bot.telegram.sendDocument(chatId, { source: documentPath }, threadExtra),
+        });
         await Promise.resolve(onMessageSent?.(sentMessage));
       } catch (err) {
         console.warn('Failed to send document:', documentPath, err);
+        await sendAttachmentFailureNotice(
+          (text, extra) => bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML', ...extra }),
+          documentPath,
+          err,
+          threadExtra
+        );
       }
     }
   }
