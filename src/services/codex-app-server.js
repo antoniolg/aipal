@@ -248,13 +248,17 @@ function createCodexAppServerClient(options = {}) {
     activeTurns.clear();
   }
 
-  function clearProcessState() {
+  function clearProcessState(expectedProc = proc) {
+    if (expectedProc && proc !== expectedProc) {
+      return false;
+    }
     initialized = false;
     proc = null;
     if (lineReader) {
       lineReader.close();
       lineReader = null;
     }
+    return true;
   }
 
   function cleanupServerRequestsForThread(threadId) {
@@ -757,8 +761,10 @@ function createCodexAppServerClient(options = {}) {
     }
   }
 
-  function handleProcessExit(reason) {
-    clearProcessState();
+  function handleProcessExit(exitedProc, reason) {
+    if (!clearProcessState(exitedProc)) {
+      return;
+    }
     const error = buildProcessExitError(reason);
     rejectPendingResponses(error);
     failActiveTurns(error);
@@ -792,7 +798,7 @@ function createCodexAppServerClient(options = {}) {
     }
 
     startPromise = (async () => {
-      proc = spawnProcess(serverCommand, serverArgs, {
+      const spawnedProc = spawnProcess(serverCommand, serverArgs, {
         cwd,
         env: {
           ...process.env,
@@ -800,18 +806,25 @@ function createCodexAppServerClient(options = {}) {
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      if (proc.stdout && typeof proc.stdout.setEncoding === 'function') {
-        proc.stdout.setEncoding('utf8');
+      proc = spawnedProc;
+      if (
+        spawnedProc.stdout
+        && typeof spawnedProc.stdout.setEncoding === 'function'
+      ) {
+        spawnedProc.stdout.setEncoding('utf8');
       }
-      if (proc.stderr && typeof proc.stderr.setEncoding === 'function') {
-        proc.stderr.setEncoding('utf8');
+      if (
+        spawnedProc.stderr
+        && typeof spawnedProc.stderr.setEncoding === 'function'
+      ) {
+        spawnedProc.stderr.setEncoding('utf8');
       }
 
-      lineReader = readline.createInterface({ input: proc.stdout });
+      lineReader = readline.createInterface({ input: spawnedProc.stdout });
       lineReader.on('line', handleMessage);
 
-      if (proc.stderr) {
-        proc.stderr.on('data', (chunk) => {
+      if (spawnedProc.stderr) {
+        spawnedProc.stderr.on('data', (chunk) => {
           const text = String(chunk || '').trim();
           if (text) {
             logger.warn(`[codex-app-server] ${text}`);
@@ -819,11 +832,14 @@ function createCodexAppServerClient(options = {}) {
         });
       }
 
-      proc.once('error', (err) => {
-        handleProcessExit(err.message || err.code || 'error');
+      spawnedProc.once('error', (err) => {
+        handleProcessExit(
+          spawnedProc,
+          err.message || err.code || 'error'
+        );
       });
-      proc.once('close', (code, signal) => {
-        handleProcessExit(signal || `exit code ${code}`);
+      spawnedProc.once('close', (code, signal) => {
+        handleProcessExit(spawnedProc, signal || `exit code ${code}`);
       });
 
       await requestInternal('initialize', {
@@ -1051,14 +1067,31 @@ function createCodexAppServerClient(options = {}) {
     pendingServerRequests.clear();
     startPromise = null;
     initialized = false;
-    if (!proc) {
+    const shuttingDownProc = proc;
+    if (!shuttingDownProc) {
       clearProcessState();
       return;
     }
-    try {
-      proc.kill('SIGTERM');
-    } catch {}
-    clearProcessState();
+    await new Promise((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        shuttingDownProc.off('close', settle);
+        shuttingDownProc.off('error', settle);
+        clearProcessState(shuttingDownProc);
+        resolve();
+      };
+      const timeout = setTimeout(settle, 1000);
+      shuttingDownProc.once('close', settle);
+      shuttingDownProc.once('error', settle);
+      try {
+        shuttingDownProc.kill('SIGTERM');
+      } catch {
+        settle();
+      }
+    });
   }
 
   return {

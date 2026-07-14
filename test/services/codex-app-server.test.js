@@ -1230,6 +1230,96 @@ test('codex app server client respawns after the server exits', async () => {
   await client.shutdown();
 });
 
+test('codex app server client ignores a late close from a replaced process', async () => {
+  let requestCount = 0;
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'model/list') {
+      requestCount += 1;
+      state.send({
+        id: message.id,
+        result: { data: [{ id: `model-${requestCount}` }] },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  const first = await client.listModels();
+  assert.equal(first[0].id, 'model-1');
+
+  const firstProc = harness.spawns[0].proc;
+  firstProc.emit('error', new Error('old process failed'));
+
+  const second = await client.listModels();
+  assert.equal(second[0].id, 'model-2');
+  assert.equal(harness.spawns.length, 2);
+
+  firstProc.emit('close', 1, null);
+
+  const third = await client.listModels();
+  assert.equal(third[0].id, 'model-3');
+  assert.equal(harness.spawns.length, 2);
+
+  await client.shutdown();
+});
+
+test('codex app server client waits for shutdown before allowing a clean restart', async () => {
+  let requestCount = 0;
+  const logger = { warn() {} };
+  const harness = createSpawnHarness((state, message) => {
+    if (message.method === 'initialize') {
+      state.send({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === 'model/list') {
+      requestCount += 1;
+      state.send({
+        id: message.id,
+        result: { data: [{ id: `model-${requestCount}` }] },
+      });
+    }
+  });
+
+  const client = createCodexAppServerClient({
+    logger,
+    spawnProcess: harness.spawnProcess,
+  });
+
+  await client.listModels();
+  const firstProc = harness.spawns[0].proc;
+  let finishClose;
+  firstProc.kill = (signal = 'SIGTERM') => {
+    firstProc.killed = true;
+    finishClose = () => firstProc.emit('close', null, signal);
+  };
+
+  let shutdownSettled = false;
+  const shutdownPromise = client.shutdown().then(() => {
+    shutdownSettled = true;
+  });
+  await Promise.resolve();
+
+  assert.equal(shutdownSettled, false);
+  assert.equal(harness.spawns.length, 1);
+
+  finishClose();
+  await shutdownPromise;
+
+  const restarted = await client.listModels();
+  assert.equal(restarted[0].id, 'model-2');
+  assert.equal(harness.spawns.length, 2);
+
+  await client.shutdown();
+});
+
 test('codex app server client exposes interruptTurn', async () => {
   const logger = { warn() {} };
   const harness = createSpawnHarness((state, message) => {
