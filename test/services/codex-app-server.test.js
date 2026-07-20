@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const {
   createCodexAppServerClient,
+  isBenignServerStderr,
 } = require('../../src/services/codex-app-server');
 
 function createSpawnHarness(onMessage) {
@@ -62,6 +63,19 @@ function createSpawnHarness(onMessage) {
     spawns,
   };
 }
+
+test('isBenignServerStderr suppresses only the known models cache schema warning', () => {
+  assert.equal(
+    isBenignServerStderr(
+      'failed to load models cache: missing field `supports_reasoning_summaries` at line 88 column 5'
+    ),
+    true
+  );
+  assert.equal(
+    isBenignServerStderr('failed to load configuration: Operation not permitted'),
+    false
+  );
+});
 
 test('codex app server client initializes, streams raw progress, and returns final text', async () => {
   const progressUpdates = [];

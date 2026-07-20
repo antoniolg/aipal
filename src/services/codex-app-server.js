@@ -10,6 +10,9 @@ const CLIENT_INFO = {
   title: 'Aipal',
   version: '0.4.0',
 };
+const BENIGN_STDERR_PATTERNS = [
+  'missing field `supports_reasoning_summaries`',
+];
 
 function asRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -49,6 +52,11 @@ function normalizeEpochTimestamp(value) {
     return undefined;
   }
   return value < 1_000_000_000_000 ? value * 1000 : value;
+}
+
+function isBenignServerStderr(text) {
+  const message = String(text || '');
+  return BENIGN_STDERR_PATTERNS.some((pattern) => message.includes(pattern));
 }
 
 function extractThreadRecords(value) {
@@ -826,7 +834,7 @@ function createCodexAppServerClient(options = {}) {
       if (spawnedProc.stderr) {
         spawnedProc.stderr.on('data', (chunk) => {
           const text = String(chunk || '').trim();
-          if (text) {
+          if (text && !isBenignServerStderr(text)) {
             logger.warn(`[codex-app-server] ${text}`);
           }
         });
@@ -1109,4 +1117,5 @@ function createCodexAppServerClient(options = {}) {
 
 module.exports = {
   createCodexAppServerClient,
+  isBenignServerStderr,
 };

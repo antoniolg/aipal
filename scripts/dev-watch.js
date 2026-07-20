@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const DEFAULT_ENTRYPOINT = path.join('src', 'index.js');
+const DEFAULT_LOG_PATH = path.join('.logs', 'dev.log');
 const DEFAULT_WATCH_DIRS = ['src'];
 const RESTART_DEBOUNCE_MS = 150;
 
@@ -15,6 +16,31 @@ function shouldRestart(fileName) {
   if (!fileName) return true;
   const text = String(fileName);
   return text.endsWith('.js') || text.endsWith('.json') || text.endsWith('.md');
+}
+
+function resolveDevLogPath(cwd, env = process.env) {
+  const configuredPath = String(env.AIPAL_DEV_LOG || DEFAULT_LOG_PATH).trim() || DEFAULT_LOG_PATH;
+  return path.resolve(cwd, configuredPath);
+}
+
+function createTeeLogger(logStream, output = console) {
+  return Object.fromEntries(
+    ['info', 'warn', 'error'].map((level) => [
+      level,
+      (...args) => {
+        output[level](...args);
+        logStream.write(`${args.map(String).join(' ')}\n`);
+      },
+    ]),
+  );
+}
+
+function mirrorStream(source, terminal, logStream) {
+  if (!source) return;
+  source.on('data', (chunk) => {
+    terminal.write(chunk);
+    logStream.write(chunk);
+  });
 }
 
 function watchDirectoryRecursive(dirPath, onChange) {
@@ -52,7 +78,10 @@ function startDevWatch(options = {}) {
   const nodeCommand = options.nodeCommand || resolveNodeCommand(options.env);
   const spawnProcess = options.spawnProcess || spawn;
   const watchDirs = options.watchDirs || DEFAULT_WATCH_DIRS;
-  const logger = options.logger || console;
+  const logPath = options.logPath || resolveDevLogPath(cwd, options.env);
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const logStream = options.logStream || fs.createWriteStream(logPath, { flags: 'w' });
+  const logger = options.logger || createTeeLogger(logStream);
 
   let child = null;
   let restartTimer = null;
@@ -65,15 +94,20 @@ function startDevWatch(options = {}) {
     child = spawnProcess(nodeCommand, [entrypoint], {
       cwd,
       env: process.env,
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
     });
+    mirrorStream(child.stdout, process.stdout, logStream);
+    mirrorStream(child.stderr, process.stderr, logStream);
     child.on('error', (err) => {
       logger.error(`Failed to spawn ${nodeCommand}: ${err.message}`);
       child = null;
     });
     child.on('exit', (code, signal) => {
       child = null;
-      if (shuttingDown) return;
+      if (shuttingDown) {
+        logStream.end();
+        return;
+      }
       if (restartPending) {
         restartPending = false;
         spawnChild();
@@ -112,7 +146,11 @@ function startDevWatch(options = {}) {
     shuttingDown = true;
     clearTimeout(restartTimer);
     for (const watcher of watchers) watcher.close();
-    if (child) child.kill(signal === 'SIGINT' ? 'SIGINT' : 'SIGTERM');
+    if (child) {
+      child.kill(signal === 'SIGINT' ? 'SIGINT' : 'SIGTERM');
+    } else {
+      logStream.end();
+    }
   }
 
   process.once('SIGINT', () => shutdown('SIGINT'));
@@ -127,6 +165,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createTeeLogger,
+  resolveDevLogPath,
   resolveNodeCommand,
   shouldRestart,
   startDevWatch,
